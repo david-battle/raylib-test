@@ -6,9 +6,12 @@ audio, networking, and fullscreen behavior. Keep changes small.
 ## Files
 
 - `main.c` — fullscreen mini-game (catch-the-sprite) + UDP ping test: sprite
-  flees the mouse and shoots dots at it; click the sprite to score. First to 20
-  wins (confetti/lose screen), scores reset. Plays `resources/` sounds for
-  shooting, hits, clicks, and UDP echo replies (server `34.3.109.195:7777`).
+  flees the mouse and shoots dots at it; click the sprite to score. First to 12
+  wins. Each win raises the level and dots home harder (resets on a loss or a
+  shutout). Win screen plays `resources/country.mp3` until a key is pressed;
+  shutouts ("Sprite: 0") get extra confetti. Ping and click-box UI is compiled
+  out by default; build with `-DSHOW_UI` to restore. Plays `resources/` sounds
+  for shooting, hits, clicks, and UDP echo replies (server `34.3.109.195:7777`).
   Sprite animation (pupils + blink) is generated procedurally at load.
 - `audio_test.c` — plays a sound file given as a path argument, capped at 5s
   (no window needed; avoids `WaitTime` which hangs without one).

@@ -25,6 +25,7 @@ int main(void) {
     Sound hitCursorSound = LoadSound("resources/target.ogg");
     Sound selfHitSound = LoadSound("resources/spring.wav");
     Sound spriteClickSound = LoadSound("resources/sound.wav");
+    Music countryMusic = LoadMusicStream("resources/country.mp3");
 
     Image baseImg = LoadImage("resources/sprite.png");
     for (int y = 0; y < baseImg.height; y++) {
@@ -74,20 +75,24 @@ int main(void) {
     int packetsSent = 0, packetsReceived = 0;
     int playerScore = 0, spriteScore = 0;
 
-    #define MAX_DOTS 16
+    #define MAX_DOTS 24
+    #define MAX_DOT_AGE 300
     Vector2 dotPos[MAX_DOTS] = { 0 }, dotVel[MAX_DOTS] = { 0 };
     bool dotActive[MAX_DOTS] = { false };
     int dotAge[MAX_DOTS] = { 0 };
     int fireCooldown = 60;
     int hitFlash = 0;
     int animTimer = 0, animFrame = 0;
+    int homingLevel = 0;
 
-    #define SCORE_TARGET 20
-    #define MAX_CONFETTI 80
+    #define SCORE_TARGET 12
+    #define MAX_CONFETTI 160
     Vector2 confettiPos[MAX_CONFETTI] = { 0 };
     float confettiVy[MAX_CONFETTI] = { 0 };
     Color confettiColor[MAX_CONFETTI] = { 0 };
+    int confettiCount = MAX_CONFETTI/2;
     bool gameOver = false;
+    bool winSongStarted = false;
     int winner = 0;
     int gameOverTimer = 0;
 
@@ -95,11 +100,21 @@ int main(void) {
         HideCursor();
 
         if (gameOver) {
-            gameOverTimer--;
+            if (winner == 1) {
+                if (!winSongStarted) {
+                    PlayMusicStream(countryMusic);
+                    winSongStarted = true;
+                }
+                UpdateMusicStream(countryMusic);
+                if (GetKeyPressed() != 0)
+                    gameOverTimer = 0;
+            } else {
+                gameOverTimer--;
+            }
             BeginDrawing();
                 if (winner == 1) {
                     ClearBackground(RAYWHITE);
-                    for (int i = 0; i < MAX_CONFETTI; i++) {
+                    for (int i = 0; i < confettiCount; i++) {
                         confettiPos[i].y += confettiVy[i];
                         if (confettiPos[i].y > GetScreenHeight()) {
                             confettiPos[i].y = -10;
@@ -109,18 +124,39 @@ int main(void) {
                     }
                     DrawText("YOU WIN!", GetScreenWidth()/2 - MeasureText("YOU WIN!", 80)/2,
                              GetScreenHeight()/2 - 40, 80, DARKGRAY);
+                    if (spriteScore == 0) {
+                        DrawText("SHUTOUT!", GetScreenWidth()/2 - MeasureText("SHUTOUT!", 40)/2,
+                                 GetScreenHeight()/2 + 45, 40, RED);
+                        const char *winInfo = TextFormat("Level: %d    You: %d   Sprite: %d", homingLevel, playerScore, spriteScore);
+                        DrawText(winInfo, GetScreenWidth()/2 - MeasureText(winInfo, 30)/2,
+                                 GetScreenHeight()/2 + 95, 30, RED);
+                        DrawText("Press any key to continue", GetScreenWidth()/2 - MeasureText("Press any key to continue", 30)/2,
+                                 GetScreenHeight()/2 + 135, 30, GRAY);
+                    } else {
+                        const char *winInfo = TextFormat("Level: %d    You: %d   Sprite: %d", homingLevel, playerScore, spriteScore);
+                        DrawText(winInfo, GetScreenWidth()/2 - MeasureText(winInfo, 30)/2,
+                                 GetScreenHeight()/2 + 55, 30, DARKGRAY);
+                        DrawText("Press any key to continue", GetScreenWidth()/2 - MeasureText("Press any key to continue", 30)/2,
+                                 GetScreenHeight()/2 + 95, 30, GRAY);
+                    }
                 } else {
                     ClearBackground(BLACK);
                     DrawText("YOU LOSE", GetScreenWidth()/2 - MeasureText("YOU LOSE", 80)/2,
                              GetScreenHeight()/2 - 40, 80, RED);
+                    const char *loseInfo = TextFormat("Level: %d    You: %d   Sprite: %d", homingLevel, playerScore, spriteScore);
+                    DrawText(loseInfo, GetScreenWidth()/2 - MeasureText(loseInfo, 30)/2,
+                             GetScreenHeight()/2 + 55, 30, GRAY);
                 }
                 DrawFPS(10, 10);
             EndDrawing();
             if (gameOverTimer <= 0) {
                 gameOver = false;
+                winSongStarted = false;
+                if (winner == 2 || spriteScore == 0) homingLevel = 0;
                 playerScore = 0;
                 spriteScore = 0;
                 for (int i = 0; i < MAX_DOTS; i++) dotActive[i] = false;
+                StopMusicStream(countryMusic);
             }
             continue;
         }
@@ -130,7 +166,9 @@ int main(void) {
             gameOverTimer = 180;
             winner = (playerScore >= SCORE_TARGET) ? 1 : 2;
             if (winner == 1) {
-                for (int i = 0; i < MAX_CONFETTI; i++) {
+                homingLevel++;
+                confettiCount = (spriteScore == 0) ? MAX_CONFETTI : MAX_CONFETTI/2;
+                for (int i = 0; i < confettiCount; i++) {
                     confettiPos[i] = (Vector2){ GetRandomValue(0, GetScreenWidth()), GetRandomValue(-GetScreenHeight(), 0) };
                     confettiVy[i] = (float)GetRandomValue(2, 8);
                     confettiColor[i] = (Color){ GetRandomValue(0, 255), GetRandomValue(0, 255), GetRandomValue(0, 255), 255 };
@@ -177,6 +215,14 @@ int main(void) {
         if (dist > 1.0f && dist < 200.0f) {
             vx -= (dx/dist)*0.04f;
             vy -= (dy/dist)*0.04f;
+        } else {
+            float cx = GetScreenWidth()/2.0f - (spritePos.x + 32);
+            float cy = GetScreenHeight()/2.0f - (spritePos.y + 32);
+            float cdist = sqrtf(cx*cx + cy*cy);
+            if (cdist > 1.0f) {
+                vx += (cx/cdist)*0.02f;
+                vy += (cy/cdist)*0.02f;
+            }
         }
         spriteVel.x = vx < -3.0f ? -3.0f : (vx > 3.0f ? 3.0f : vx);
         spriteVel.y = vy < -3.0f ? -3.0f : (vy > 3.0f ? 3.0f : vy);
@@ -211,9 +257,22 @@ int main(void) {
         }
         for (int i = 0; i < MAX_DOTS; i++) {
             if (!dotActive[i]) continue;
+            if (homingLevel > 0) {
+                float hx = mouse.x - dotPos[i].x;
+                float hy = mouse.y - dotPos[i].y;
+                float hlen = sqrtf(hx*hx + hy*hy);
+                if (hlen > 1.0f) {
+                    float vlen = sqrtf(dotVel[i].x*dotVel[i].x + dotVel[i].y*dotVel[i].y);
+                    float t = 0.05f*homingLevel;
+                    if (t > 0.9f) t = 0.9f;
+                    dotVel[i].x += (hx/hlen*vlen - dotVel[i].x)*t;
+                    dotVel[i].y += (hy/hlen*vlen - dotVel[i].y)*t;
+                }
+            }
             dotPos[i].x += dotVel[i].x;
             dotPos[i].y += dotVel[i].y;
             dotAge[i]++;
+            if (dotAge[i] > MAX_DOT_AGE) dotActive[i] = false;
             if (dotPos[i].x < -10 || dotPos[i].x > GetScreenWidth() + 10 ||
                 dotPos[i].y < -10 || dotPos[i].y > GetScreenHeight() + 10)
                 dotActive[i] = false;
@@ -225,6 +284,8 @@ int main(void) {
                     PlaySound(hitCursorSound);
                 }
                 hitFlash = 20;
+                dotActive[i] = false;
+                continue;
             }
             if (dotAge[i] > 10 && CheckCollisionPointRec(dotPos[i],
                     (Rectangle){ spritePos.x, spritePos.y, 64, 64 })) {
@@ -241,12 +302,17 @@ int main(void) {
 
         BeginDrawing();
             ClearBackground(RAYWHITE);
+            DrawText(TextFormat("Level: %d", homingLevel), 20, 40, 20, DARKGRAY);
+#ifdef SHOW_UI
             DrawText("Press SPACE to send UDP ping", 100, 100, 30, DARKGRAY);
             DrawText(TextFormat("Sent: %d   Received: %d", packetsSent, packetsReceived), 100, 150, 20, GRAY);
+#endif
             const char *score = TextFormat("You: %d   Sprite: %d", playerScore, spriteScore);
             DrawText(score, GetScreenWidth() - MeasureText(score, 40) - 20, 20, 40, DARKGRAY);
+#ifdef SHOW_UI
             DrawRectangleRec(clickBox, boxHeld ? SKYBLUE : LIGHTGRAY);
             DrawText("Click me", clickBox.x + 20, clickBox.y + 30, 20, DARKGRAY);
+#endif
             DrawTextureRec(sprite, (Rectangle){ animFrame*64, 0, 64, 64 }, spritePos, WHITE);
             for (int i = 0; i < MAX_DOTS; i++) {
                 if (dotActive[i]) DrawCircleV(dotPos[i], 5, RED);
@@ -264,6 +330,7 @@ int main(void) {
     UnloadSound(hitCursorSound);
     UnloadSound(selfHitSound);
     UnloadSound(spriteClickSound);
+    UnloadMusicStream(countryMusic);
     UnloadTexture(sprite);
     CloseAudioDevice();
     CloseWindow();

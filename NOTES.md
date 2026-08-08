@@ -71,6 +71,21 @@ Build with `gcc -I ~/raylib/src main.c hide_cursor_x11.c -o net_test
   Xwayland `-cursor` option, Wayland-native raylib backend, or draw the custom
   cursor and accept the system one on top.
 
+## main.c gameplay
+
+- Catch-the-sprite mini-game: click the sprite to score; the sprite flees the
+  mouse (within ~200px) and otherwise drifts back toward screen center so it
+  stays visible. Win target is 12.
+- Each win raises the level; dots gain a homing turn toward the cursor
+  (`0.05 * level`, capped 0.9). Level resets to 0 on a loss or a shutout win
+  ("beating the game"). Dots despawn on contact (player or sprite), off-screen,
+  or after 5s; pool is 24.
+- The win screen plays `resources/country.mp3` (looping) until a key is pressed
+  — mouse clicks intentionally do NOT skip it, so dodging near the cursor
+  doesn't cut the song short. Shutouts get a red banner + double confetti.
+- Ping/click-box UI is `#ifdef SHOW_UI` (off by default); the underlying
+  detection and sounds still run. `-DSHOW_UI` restores the drawn elements.
+
 ## Sprites / Textures
 
 - raylib has no built-in sprite or animation manager. A sprite is just a
