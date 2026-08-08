@@ -47,6 +47,27 @@ Firewall rule `allow-udp-7777` opens the port.
   `~/raylib-test` history) to restore SSH keys and the echo server.
 - Quick verify steps (round-trip test + SSH checks) are in `NOTES.md`.
 
+## Start / stop the instance
+
+`udp-test` is a billable e2-small; leave it **stopped** when not needed. The
+echo server only responds while it runs, so `main.c`'s ping needs it started.
+
+- Start: `gcloud compute instances start udp-test --zone=us-west1-a --project=plasma-sol-276402`
+  (the `startup-script` metadata re-installs the `udp-echo` service on boot).
+- Stop: `gcloud compute instances stop udp-test --zone=us-west1-a --project=plasma-sol-276402`
+- State: `gcloud compute instances list --project=plasma-sol-276402 --filter="name=udp-test" --format="table(name,status,zone)"`
+- As of 2026-08, the instance is currently **stopped (TERMINATED)**.
+
+## Wrap-up procedure
+
+End of a session: commit source, stop the cloud instance.
+
+1. Check state: `git status` / `git diff` (binaries are gitignored — source
+   only).
+2. Commit (`git add -A` then `git commit`). Do not push unless asked.
+3. Stop the instance to avoid billing (command in "Start / stop" above); note
+   the ping in `main.c` won't respond until it's started again.
+
 ## Sibling repos
 
 - `~/raylib` — upstream `raysan5/raylib` clone, not personal, do not push.
