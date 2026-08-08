@@ -5,17 +5,25 @@ audio, networking, and fullscreen behavior. Keep changes small.
 
 ## Files
 
-- `main.c` — fullscreen UDP ping test: sends "ping" on SPACE, plays `coin.wav`
-  on reply, plays `buttonfx.wav` on a clickable box. Server address is hardcoded.
-- `audio_test.c` — audio device init and sound playback check.
-- `resources/` — sound effects used by the above.
+- `main.c` — fullscreen mini-game (catch-the-sprite) + UDP ping test: sprite
+  flees the mouse and shoots dots at it; click the sprite to score. First to 20
+  wins (confetti/lose screen), scores reset. Plays `resources/` sounds for
+  shooting, hits, clicks, and UDP echo replies (server `34.3.109.195:7777`).
+  Sprite animation (pupils + blink) is generated procedurally at load.
+- `audio_test.c` — plays a sound file given as a path argument, capped at 5s
+  (no window needed; avoids `WaitTime` which hangs without one).
+- `hide_cursor_x11.c` — attempts to hide the system cursor on WSLg (see
+  `NOTES.md`; currently unresolved, cursor stays visible).
+- `play_all.sh` — plays every sound in `resources/` via `audio_test`.
+- `resources/` — sound effects (copied from raylib examples and used by
+  `main.c`) and `sprite.png`.
 
 ## Building
 
 Binaries are compiled by statically linking against the sibling raylib clone at
 `~/raylib` (`src/raylib.h`, `src/libraylib.a`). Compiled binaries
 (`audio_test`, `fullscreen_test`, `net_test`, `*.o`) are gitignored; commit
-source only.
+source only. `net_test` also compiles `hide_cursor_x11.c` (see `NOTES.md`).
 
 ## Echo server (for `main.c`)
 
@@ -34,6 +42,7 @@ Firewall rule `allow-udp-7777` opens the port.
   be ed25519/ecdsa.
 - If the VM is ever recreated, re-add the `startup-script` metadata (script in
   `~/raylib-test` history) to restore SSH keys and the echo server.
+- Quick verify steps (round-trip test + SSH checks) are in `NOTES.md`.
 
 ## Sibling repos
 
