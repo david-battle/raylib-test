@@ -43,8 +43,43 @@ int main(int argc, char **argv) {
     // rows 40-49); draw 2x2 black pupils at (25,43) and (37,43) and shift.
     Image sheet = GenImageColor(64*4, 64, BLANK);
     for (int f = 0; f < 4; f++) ImageDrawImage(&sheet, baseImg, f*64, 0, WHITE);
+    // Mouth animates with the gaze frames: open fanged chomp while looking
+    // around (1-2), closed grin at rest (0) and on the blink frame (3).
+    Color mouthCol = { 40, 18, 75, 255 };
+    Color fangCol = { 245, 245, 255, 255 };
     for (int f = 0; f < 4; f++) {
         int off = f*64;
+        if (f == 1 || f == 2) {
+            for (int y = 49; y <= 59; y++)
+                for (int x = 23; x <= 41; x++) {
+                    float ex = (x - 32)/9.0f, ey = (y - 54)/5.0f;
+                    if (ex*ex + ey*ey <= 1.0f)
+                        ImageDrawPixel(&sheet, off + x, y, mouthCol);
+                }
+            for (int i = 0; i < 3; i++) {
+                ImageDrawPixel(&sheet, off + 26 + i, 50, fangCol);
+                ImageDrawPixel(&sheet, off + 36 + i, 50, fangCol);
+            }
+            for (int y = 51; y <= 53; y++) {
+                ImageDrawPixel(&sheet, off + 27, y, fangCol);
+                ImageDrawPixel(&sheet, off + 36, y, fangCol);
+            }
+        } else {
+            for (int y = 51; y <= 55; y++)
+                for (int x = 24; x <= 40; x++) {
+                    float ex = (x - 32)/8.0f, ey = (y - 50)/4.0f;
+                    if (ex*ex + ey*ey <= 1.0f && y > 50)
+                        ImageDrawPixel(&sheet, off + x, y, mouthCol);
+                }
+            for (int i = 0; i < 2; i++) {
+                ImageDrawPixel(&sheet, off + 27 + i, 51, fangCol);
+                ImageDrawPixel(&sheet, off + 27 + i, 52, fangCol);
+                ImageDrawPixel(&sheet, off + 35 + i, 51, fangCol);
+                ImageDrawPixel(&sheet, off + 35 + i, 52, fangCol);
+            }
+            ImageDrawPixel(&sheet, off + 27, 53, fangCol);
+            ImageDrawPixel(&sheet, off + 36, 53, fangCol);
+        }
         if (f < 3) {
             int dx = (f == 1) ? 2 : (f == 2) ? -2 : 0;
             for (int y = 43; y <= 44; y++) {
@@ -92,6 +127,7 @@ int main(int argc, char **argv) {
     int homingLevel = 0;
 
     #define SCORE_TARGET 12
+    #define BG ((Color){ 28, 28, 34, 255 })
     #define MAX_CONFETTI 160
     Vector2 confettiPos[MAX_CONFETTI] = { 0 };
     float confettiVy[MAX_CONFETTI] = { 0 };
@@ -115,9 +151,9 @@ int main(int argc, char **argv) {
             } else {
                 gameOverTimer--;
             }
-            BeginDrawing();
+                BeginDrawing();
                 if (winner == 1) {
-                    ClearBackground(RAYWHITE);
+                    ClearBackground(BG);
                     for (int i = 0; i < confettiCount; i++) {
                         confettiPos[i].y += confettiVy[i];
                         if (confettiPos[i].y > GetScreenHeight()) {
@@ -127,7 +163,7 @@ int main(int argc, char **argv) {
                         DrawCircleV(confettiPos[i], 6, confettiColor[i]);
                     }
                     DrawText("YOU WIN!", GetScreenWidth()/2 - MeasureText("YOU WIN!", 80)/2,
-                             GetScreenHeight()/2 - 40, 80, DARKGRAY);
+                             GetScreenHeight()/2 - 40, 80, LIGHTGRAY);
                     if (spriteScore == 0) {
                         DrawText("SHUTOUT!", GetScreenWidth()/2 - MeasureText("SHUTOUT!", 40)/2,
                                  GetScreenHeight()/2 + 45, 40, RED);
@@ -139,7 +175,7 @@ int main(int argc, char **argv) {
                     } else {
                         const char *winInfo = TextFormat("Level: %d    You: %d   Sprite: %d", homingLevel, playerScore, spriteScore);
                         DrawText(winInfo, GetScreenWidth()/2 - MeasureText(winInfo, 30)/2,
-                                 GetScreenHeight()/2 + 55, 30, DARKGRAY);
+                                 GetScreenHeight()/2 + 55, 30, LIGHTGRAY);
                         DrawText("Press any key to continue", GetScreenWidth()/2 - MeasureText("Press any key to continue", 30)/2,
                                  GetScreenHeight()/2 + 95, 30, GRAY);
                     }
@@ -305,17 +341,17 @@ int main(int argc, char **argv) {
         if (animTimer >= 8) { animTimer = 0; animFrame = (animFrame + 1) % 4; }
 
         BeginDrawing();
-            ClearBackground(RAYWHITE);
-            DrawText(TextFormat("Level: %d", homingLevel), 20, 40, 20, DARKGRAY);
+            ClearBackground(BG);
+            DrawText(TextFormat("Level: %d", homingLevel), 20, 40, 20, LIGHTGRAY);
 #ifdef SHOW_UI
-            DrawText("Press SPACE to send UDP ping", 100, 100, 30, DARKGRAY);
+            DrawText("Press SPACE to send UDP ping", 100, 100, 30, LIGHTGRAY);
             DrawText(TextFormat("Sent: %d   Received: %d", packetsSent, packetsReceived), 100, 150, 20, GRAY);
 #endif
             const char *score = TextFormat("You: %d   Sprite: %d", playerScore, spriteScore);
-            DrawText(score, GetScreenWidth() - MeasureText(score, 40) - 20, 20, 40, DARKGRAY);
+            DrawText(score, GetScreenWidth() - MeasureText(score, 40) - 20, 20, 40, LIGHTGRAY);
 #ifdef SHOW_UI
-            DrawRectangleRec(clickBox, boxHeld ? SKYBLUE : LIGHTGRAY);
-            DrawText("Click me", clickBox.x + 20, clickBox.y + 30, 20, DARKGRAY);
+            DrawRectangleRec(clickBox, boxHeld ? SKYBLUE : (Color){ 60, 60, 70, 255 });
+            DrawText("Click me", clickBox.x + 20, clickBox.y + 30, 20, LIGHTGRAY);
 #endif
             DrawTextureRec(sprite, (Rectangle){ animFrame*64, 0, 64, 64 }, spritePos, WHITE);
             for (int i = 0; i < MAX_DOTS; i++) {

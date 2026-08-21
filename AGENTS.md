@@ -21,7 +21,8 @@ audio, networking, and fullscreen behavior. Keep changes small.
   ephemeral and changes on each instance start; run via `./run_net_test.sh`,
   which resolves the current external IP from gcloud and passes it as
   `argv[1]` (`./net_test <ip>` works directly too; default is the old IP).
-  Sprite animation (pupils + blink) is generated procedurally at load.
+  Sprite animation (pupils, blink, and chomping mouth) is generated
+  procedurally at load.
 - `audio_test.c` — plays a sound file given as a path argument, capped at 5s
   (no window needed; avoids `WaitTime` which hangs without one).
 - `hide_cursor_x11.c` — replaces the system cursor with the X cursor-font
@@ -31,6 +32,9 @@ audio, networking, and fullscreen behavior. Keep changes small.
 - `analyze_audio.py` — stdlib-only spectral analysis (FFT report + ASCII
   spectrogram) of any sound file via ffmpeg; used to "listen" to audio.
 - `play_all.sh` — plays every sound in `resources/` via `audio_test`.
+- `gen_sprite.py` — regenerates `resources/sprite.png` (body/antenna/feet/
+  eye whites only; pupils and mouth are drawn per-frame by `main.c`, so the
+  eye geometry in the script must not move — see NOTES.md).
 - `resources/` — sound effects (`hit_splat.wav`, `weird.wav` are synthesized;
   see NOTES.md provenance), `sprite.png`, and `C5_512Hz.wav` (test tone).
 
