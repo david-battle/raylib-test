@@ -52,12 +52,28 @@ Firewall rule `allow-udp-7777` opens the port.
 - Deployed without SSH via instance metadata `startup-script` (runs as root on
   every boot): rebuilds `/home/dlbattle/.ssh/authorized_keys` from instance +
   project metadata keys, then installs the `udp-echo` systemd service running
-  `/opt/udp_echo.py` (a simple UDP echo loopback on 7777).
+  `/opt/udp_echo.py` (a simple UDP echo loopback on 7777) and the `http-echo`
+  systemd service running `/opt/http_echo.py` (HTTP "date" server on port 80,
+  replies with the output of the linux `date` command for any request).
+  Firewall rules `allow-udp-7777` and `allow-tcp-80` open the ports.
 - SSH: `gcloud compute ssh udp-test --zone=us-west1-a` (or the `udpgc` helper
   in `~/.local/bin`). Uses the ed25519 key at `~/.ssh/google_compute_engine`
   (the old RSA key is backed up at `~/.ssh/google_compute_engine.rsa.bak`).
   The Debian 12 sshd rejects plain `ssh-rsa` SHA-1 signatures, so the key must
   be ed25519/ecdsa.
+- Non-interactive remote commands from the agent work fine — no startup-script
+  hacks needed. Exact procedure:
+  ```
+  gcloud compute ssh udp-test --zone=us-west1-a --project=plasma-sol-276402 \
+    --command="systemctl is-active udp-echo"
+  ```
+  Notes: requires the instance to be running and fully booted (~20s after
+  start; sshd refuses connections until then — "connection refused" right
+  after a start just means boot isn't done). If output looks noisy, filter
+  with `grep -v "^Warning\|^Updating\|^Waiting"`. Serial console for
+  debugging boot/startup-script issues:
+  `gcloud compute instances get-serial-port-output udp-test --zone=us-west1-a
+  --project=plasma-sol-276402`.
 - If the VM is ever recreated, re-add the `startup-script` metadata (script in
   `~/raylib-test` history) to restore SSH keys and the echo server.
 - Quick verify steps (round-trip test + SSH checks) are in `NOTES.md`.
