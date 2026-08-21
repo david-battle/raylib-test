@@ -7,7 +7,7 @@ Future experiment ideas from design discussions. Not build instructions.
 Single external round-trip test (this is the reliable fast check):
 
 ```bash
-timeout 5 python3 -c "import socket;s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);s.settimeout(3);s.sendto(b'ping',('34.3.109.195',7777));print('ECHO OK:',s.recvfrom(1024)[0])"
+timeout 5 python3 -c "import socket;s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);s.settimeout(3);s.sendto(b'ping',('35.212.149.98',7777));print('ECHO OK:',s.recvfrom(1024)[0])"
 ```
 
 - Prefer python sockets over `/dev/udp` + bash `read`: the bash probe returned
@@ -48,28 +48,55 @@ timeout 5 python3 -c "import socket;s=socket.socket(socket.AF_INET,socket.SOCK_D
   for natural-sounding retriggers.
 - raylib has no managed SFX pool/mixer; the pool pattern above is on you.
 
-## Custom cursor on WSLg — UNRESOLVED (rat hole)
+## Sound synthesis / editing workflow
 
-Goal: hide the system cursor in `main.c` and draw a custom one. **Nothing
-worked; cursor stays visible.** Status quo: `main.c` calls `HideCursor()` every
-frame and `hide_cursor_x11.c` defines an invisible X11 cursor on the window.
-Build with `gcc -I ~/raylib/src main.c hide_cursor_x11.c -o net_test
-~/raylib/src/libraylib.a -lm -lpthread -ldl -lX11`.
+- `analyze_audio.py <file> [segments]` — stdlib-only FFT report (no numpy):
+  dominant pitches per segment with note names, spectral centroid, ASCII
+  spectrogram. Decodes any format via ffmpeg. This is how the model "listens".
+- sox + ffmpeg are installed for synth/transform (`synth`, `pitch`, `speed`,
+  `fade`, `norm`, filters). Sample-level edits via python `wave` module
+  (e.g. gamma compression `y = sign(x)*|x|^g` boosts quiet parts without
+  touching peaks).
+- Psychoacoustic gotcha: low-frequency sounds feel late/quiet at onset no
+  matter what the samples say — the ear integrates slowly below ~500 Hz.
+  Perceived-onset fixes: shift pitch up a few semitones, or trigger earlier.
+- Provenance: `hit_splat.wav` (bullet-hits-you) is synthesized brownnoise,
+  lowpass 700, γ=0.35 compressed, +3 semitones; replaces the celebratory
+  chirp `target.ogg` used to be. `weird.wav` (sprite shoot) is the original
+  sped 1.84x and pitched down 6 semitones (full sweep kept, not trimmed).
 
-- Environment: WSL2 + WSLg. raylib uses GLFW over X11 (Xwayland). The Windows
-  compositor draws the cursor, so X11/GLFW cursor hiding is ignored.
-- Tried: `HideCursor()` (reports `IsCursorHidden()=1` but no visual change),
-  calling it every frame, and a 1x1 transparent cursor via `XDefineCursor`
-  (XCreatePixmapCursor). All no-ops visually.
-- The bundled raylib GLFW fork (`rglfw`) does NOT export `glfwSetCursor` (it's
-  an undefined symbol), so the classic "attach empty cursor via glfwSetCursor"
-  trick is unavailable without compiling the full GLFW sources.
-- `raylib.h` and Xlib both define `Font`, so X11 code must live in its own
-  translation unit (`hide_cursor_x11.c`) — you can't `#include <X11/Xlib.h>`
-  in the same file as `raylib.h`.
-- Uninvestigated ideas for later: bump WSLg/WSL (bug may be version-specific),
-  Xwayland `-cursor` option, Wayland-native raylib backend, or draw the custom
-  cursor and accept the system one on top.
+## Custom cursor on WSLg — SOLVED (was a rat hole)
+
+Goal: only ONE thing at the mouse position. **Result: the arrow is replaced
+by the X cursor-font "target" glyph** (`XC_target`, circle-with-dot reticle)
+via `hide_cursor_x11.c`; `main.c` draws nothing at the mouse anymore, so the
+cursor IS the aim marker (the old drawn crosshair sprite and its hit-flash
+tint are gone; hits still cue via `target.ogg`). True invisibility is NOT
+possible on WSLg: empty cursors (1x1 transparent pixmap, blank-glyph
+`XCreateGlyphCursor`) fall back to the default arrow, and custom pixmaps are
+dropped entirely. Build with `gcc -I ~/raylib/src main.c hide_cursor_x11.c
+-o net_test ~/raylib/src/libraylib.a -lm -lpthread -ldl -lX11`.
+
+Two separate bugs were stacked on top of the compositor limitation:
+
+1. **Bad window handle**: raylib 6.x's `GetWindowHandle()` returns a *pointer
+   to* the X11 Window id (rcore_desktop_glfw.c stores it in a local), not the
+   id itself. Casting the pointer value to a Window made every `XDefineCursor`
+   fail with BadWindow (visible in launch logs) and silently no-op.
+2. **WSLg drops pixmap cursors**: even with a valid window,
+   `XDefineCursor` of an `XCreatePixmapCursor` image (invisible OR visible)
+   never reaches the Windows side — the default arrow stays. Known multi-year
+   WSLg bug (wslg#376/#1300). Font/glyph cursors DO get through; that's the
+   workaround (`XCreateFontCursor`).
+
+Rules that keep it working:
+
+- Never call raylib's `HideCursor()`: on X11 GLFW installs its own cursor,
+  overriding ours (it was being called every frame).
+- Don't bother with `XFixesHideCursor`: any key/button press unhides, useless
+  during gameplay.
+- Cursor shape is one line: swap the `XC_*` constant in `hide_cursor_x11.c`
+  (tried: `XC_dot`, `XC_crosshair`, settled on `XC_target`).
 
 ## main.c gameplay
 

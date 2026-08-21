@@ -3,6 +3,12 @@
 Personal raylib experiment playground. Small single-file C programs testing
 audio, networking, and fullscreen behavior. Keep changes small.
 
+## Conventions
+
+- If the user sends any message after the agent started `net_test`, assume
+  they killed it — verify with `pgrep -x net_test` instead of assuming it's
+  still running.
+
 ## Files
 
 - `main.c` — fullscreen mini-game (catch-the-sprite) + UDP ping test: sprite
@@ -11,15 +17,22 @@ audio, networking, and fullscreen behavior. Keep changes small.
   shutout). Win screen plays `resources/country.mp3` until a key is pressed;
   shutouts ("Sprite: 0") get extra confetti. Ping and click-box UI is compiled
   out by default; build with `-DSHOW_UI` to restore. Plays `resources/` sounds
-  for shooting, hits, clicks, and UDP echo replies (server `34.3.109.195:7777`).
+  for shooting, hits, clicks, and UDP echo replies. The echo server IP is
+  ephemeral and changes on each instance start; run via `./run_net_test.sh`,
+  which resolves the current external IP from gcloud and passes it as
+  `argv[1]` (`./net_test <ip>` works directly too; default is the old IP).
   Sprite animation (pupils + blink) is generated procedurally at load.
 - `audio_test.c` — plays a sound file given as a path argument, capped at 5s
   (no window needed; avoids `WaitTime` which hangs without one).
-- `hide_cursor_x11.c` — attempts to hide the system cursor on WSLg (see
-  `NOTES.md`; currently unresolved, cursor stays visible).
+- `hide_cursor_x11.c` — replaces the system cursor with the X cursor-font
+  `XC_target` reticle on WSLg (true invisibility impossible; see `NOTES.md`).
+  Must not call raylib's `HideCursor()`, which would override it. `main.c`
+  draws nothing at the mouse — the cursor is the aim marker.
+- `analyze_audio.py` — stdlib-only spectral analysis (FFT report + ASCII
+  spectrogram) of any sound file via ffmpeg; used to "listen" to audio.
 - `play_all.sh` — plays every sound in `resources/` via `audio_test`.
-- `resources/` — sound effects (copied from raylib examples and used by
-  `main.c`) and `sprite.png`.
+- `resources/` — sound effects (`hit_splat.wav`, `weird.wav` are synthesized;
+  see NOTES.md provenance), `sprite.png`, and `C5_512Hz.wav` (test tone).
 
 ## Building
 
@@ -31,7 +44,9 @@ source only. `net_test` also compiles `hide_cursor_x11.c` (see `NOTES.md`).
 ## Echo server (for `main.c`)
 
 The UDP echo server `main.c` pings lives on the gcloud instance `udp-test`
-(zone `us-west1-a`, project `plasma-sol-276402`) at `34.3.109.195:7777`.
+(zone `us-west1-a`, project `plasma-sol-276402`). Its external IP is ephemeral
+(currently `35.212.149.98`); resolve it with `./run_net_test.sh` or
+`gcloud compute instances list ... --format="get(networkInterfaces[0].accessConfigs[0].natIP)"`.
 Firewall rule `allow-udp-7777` opens the port.
 
 - Deployed without SSH via instance metadata `startup-script` (runs as root on
@@ -58,15 +73,32 @@ echo server only responds while it runs, so `main.c`'s ping needs it started.
 - State: `gcloud compute instances list --project=plasma-sol-276402 --filter="name=udp-test" --format="table(name,status,zone)"`
 - As of 2026-08, the instance is currently **stopped (TERMINATED)**.
 
-## Wrap-up procedure
+## Handoff procedure
 
-End of a session: commit source, stop the cloud instance.
+Triggered by the user saying "handoff". End of a session. The agent does
+everything here; the user pushes out of context afterward — **never push**.
 
-1. Check state: `git status` / `git diff` (binaries are gitignored — source
-   only).
-2. Commit (`git add -A` then `git commit`). Do not push unless asked.
-3. Stop the instance to avoid billing (command in "Start / stop" above); note
-   the ping in `main.c` won't respond until it's started again.
+1. Kill stray processes: `pkill -x net_test` (holds an X window + audio
+   device).
+2. Triage stray files: check `git status` for untracked files and leftovers.
+   For EACH one make an executive decision without asking the user:
+   - `git add` it if it's real content (source, docs, resources)
+   - add a `.gitignore` rule if it's a recurring build artifact or local
+     scratch that should stay on disk
+   - delete it if it's leftover junk (temp files, failed experiments with no
+     future, stale backups)
+   Never leave untracked files unclassified, and never ask which to do.
+3. Verify clean source: `git status` / `git diff`; commit source only.
+4. Sanity-build if any C files changed (the command in `run_net_test.sh`) so
+   committed source always compiles.
+5. Commit (`git commit`, message style: short imperative summary, e.g. "Turn
+   network test into catch-the-sprite game").
+6. Stop the cloud instance (command in "Start / stop" above) to avoid billing.
+   The external IP is ephemeral; next session resolves it via
+   `./run_net_test.sh`.
+7. Leave breadcrumbs BEFORE committing: non-obvious findings go in NOTES.md
+   (asset provenance, rat-hole conclusions, gotchas). AGENTS.md gets only
+   facts that change how a future session works.
 
 ## Sibling repos
 

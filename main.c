@@ -9,20 +9,21 @@
 #include <string.h>
 #include <stdint.h>
 
-void HideCursorX11(unsigned long window);
+void HideCursorX11(void *window);
 
-int main(void) {
+int main(int argc, char **argv) {
     InitWindow(1920, 1080, "Network + Input Test");
     SetWindowState(FLAG_FULLSCREEN_MODE);
     SetTargetFPS(60);
-    HideCursor();
-    HideCursorX11((unsigned long)(uintptr_t)GetWindowHandle());
+    // NOTE: Do NOT call raylib HideCursor(): on X11 it installs GLFW's own
+    // invisible cursor, overriding the X11 cursor set below every frame.
+    HideCursorX11(GetWindowHandle());
 
     InitAudioDevice();
     Sound echoSound = LoadSound("resources/coin.wav");
     Sound clickSound = LoadSound("resources/buttonfx.wav");
     Sound shootSound = LoadSound("resources/weird.wav");
-    Sound hitCursorSound = LoadSound("resources/target.ogg");
+    Sound hitCursorSound = LoadSound("resources/hit_splat.wav");
     Sound selfHitSound = LoadSound("resources/spring.wav");
     Sound spriteClickSound = LoadSound("resources/sound.wav");
     Music countryMusic = LoadMusicStream("resources/country.mp3");
@@ -61,12 +62,17 @@ int main(void) {
     UnloadImage(sheet);
 
     // Non-blocking UDP socket
+    const char *serverIp = (argc > 1) ? argv[1] : "34.3.109.195";
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
     fcntl(sock, F_SETFL, O_NONBLOCK);
     struct sockaddr_in serverAddr = {0};
     serverAddr.sin_family = AF_INET;
     serverAddr.sin_port = htons(7777);
-    inet_pton(AF_INET, "34.3.109.195", &serverAddr.sin_addr);
+    if (inet_pton(AF_INET, serverIp, &serverAddr.sin_addr) != 1) {
+        TraceLog(LOG_ERROR, "Invalid IP address: %s", serverIp);
+        CloseWindow();
+        return 1;
+    }
 
     Rectangle clickBox = { 100, 300, 150, 80 };
     bool boxHeld = false;
@@ -97,8 +103,6 @@ int main(void) {
     int gameOverTimer = 0;
 
     while (!WindowShouldClose()) {
-        HideCursor();
-
         if (gameOver) {
             if (winner == 1) {
                 if (!winSongStarted) {
@@ -317,9 +321,8 @@ int main(void) {
             for (int i = 0; i < MAX_DOTS; i++) {
                 if (dotActive[i]) DrawCircleV(dotPos[i], 5, RED);
             }
-            DrawTexturePro(sprite, (Rectangle){ 0, 0, 64, 64 },
-                           (Rectangle){ mouse.x - 16, mouse.y - 16, 32, 32 },
-                           (Vector2){ 0, 0 }, 0.0f, hitFlash > 0 ? RED : WHITE);
+            // The X11 reticle cursor (hide_cursor_x11.c) IS the crosshair;
+            // don't draw one at the mouse or there'd be two objects.
             DrawFPS(10, 10);
         EndDrawing();
     }
