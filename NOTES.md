@@ -113,6 +113,63 @@ Rules that keep it working:
 - Ping/click-box UI is `#ifdef SHOW_UI` (off by default); the underlying
   detection and sounds still run. `-DSHOW_UI` restores the drawn elements.
 
+## Graphics — bloom pipeline in main.c
+
+- Post-processing chain (all shaders embedded as GLSL 330 string literals,
+  `LoadShaderFromMemory(NULL, fs)`): scene RT -> brightpass at half res ->
+  separable gaussian blur ping-pong x2 -> composite (scene + bloom + contrast/
+  saturation grade + vignette). HUD text is drawn AFTER composite so it stays
+  crisp and never blooms. rlgl's default vertex shader exports
+  `fragTexCoord`/`fragColor`; samplers named `texture0`/`texture1` are
+  auto-bound to units by name at shader load.
+- **WSLg/D3D12 presents RenderTexture chains Y-MIRRORED** vs what the same
+  code does on vanilla GL: scene content drawn via `BeginTextureMode` ->
+  fullscreen composite lands vertically flipped (position AND glyph
+  orientation), while HUD drawn outside the pipeline stays correct.
+  Symmetric content hides it completely — a radial gradient, dot grid and
+  uniform motes looked fine while the sprite was mirrored onto the opposite
+  side of the screen from its logical hitbox. Fix applied ONCE in the
+  composite fragment shader: `vec2 uv = vec2(fragTexCoord.x,
+  1.0 - fragTexCoord.y)` used for BOTH samplers. Do not remove that line on
+  this machine, and assume any new RT-presented pass needs the same
+  treatment. Intermediate RT hops are left untouched — they are
+  self-consistent; only net presentation carries one flip.
+- Debugging technique that cracked it (reusable): (1) log `GetMousePosition()`
+  + entity positions to stderr every ~30 frames — revealed clicks WERE
+  registering against the logical rect (score incremented) while the user
+  aimed at the mirrored visual; (2) draw asymmetric world-space markers
+  ("TOP"/"BOTTOM" text at opposite corners) through the suspect pipeline and
+  `TakeScreenshot()` — symmetric backgrounds can never expose this class of
+  bug; (3) x11grab is useless here (see above), so backbuffer dumps are the
+  only ground truth.
+- The static lib is OpenGL 3.3 (`strings ~/raylib/src/libraylib.a | grep
+  "#version"` shows 330) — write `#version 330` fragment shaders, not 100.
+- Verifying visuals from the agent: **x11grab/ffmpeg screenshots of :0 come
+  back BLACK for this app** (GLX swap buffers invisible to X capture). Use a
+  temporary raylib `TakeScreenshot()` call instead — it reads the real GL
+  backbuffer. Remove the calls once verified.
+- `GenImageGradientRadial` falloff ends at the inscribed circle → hard visible
+  disc edge on widescreen. `GenBackground()` in main.c hand-rolls a quadratic
+  falloff to the corner distance instead. Same trick gives `GenGlowTexture()`,
+  the soft radial glow sprite used for the sprite aura and dot halos.
+- Dark gradients over small value ranges band hard at 8-bit depth (~17 levels
+  corner-to-center → visible rings every ~75px on a good monitor). Fix is
+  bake-time Bayer ordered dithering in `GenBackground()`; any new dark
+  gradient needs the same treatment.
+- Sprite/scene light integration: `SceneLightTint()` reuses the background
+  falloff curve to tint sprite/shadow/aura with scene ambient, and a
+  recolor-only overhead-light pass bakes shading into the sheet at load
+  (near-whites floored at 0.92 so pupil contrast survives). No pixels move —
+  the `gen_sprite.py` geometry contract is unaffected.
+- raylib 6.x moved the math helpers out of raylib.h (`Clamp` now lives in
+  raymath.h) — use fminf/fmaxf or include raymath.h.
+- Juice systems added: trauma-based screen shake (offsets BeginMode2D target;
+  HUD unaffected), white-silhouette flash overlay (a plain tint can only
+  darken, never whiten), squash/stretch via DrawTexturePro dest rect, dot
+  motion trails, particle/ring pools, floating "+1" popups, rotating confetti,
+  red screen-edge pulse when the cursor takes a hit. Win screen runs through
+  the same bloom chain (gold title drawn into the scene pass = free glow).
+
 ## Sprites / Textures
 
 - raylib has no built-in sprite or animation manager. A sprite is just a

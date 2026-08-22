@@ -17,7 +17,10 @@ audio, networking, and fullscreen behavior. Keep changes small.
   shutout). Win screen plays `resources/country.mp3` until a key is pressed;
   shutouts ("Sprite: 0") get extra confetti. Ping and click-box UI is compiled
   out by default; build with `-DSHOW_UI` to restore. Plays `resources/` sounds
-  for shooting, hits, clicks, and UDP echo replies. The echo server IP is
+  for shooting, hits, clicks, and UDP echo replies. Rendering goes through an
+  embedded GLSL 330 bloom pipeline (shader strings in main.c; HUD draws after
+  composite). WSLg presents render-target chains Y-mirrored — the un-flip in
+  the composite shader must stay (see NOTES.md). The echo server IP is
   ephemeral and changes on each instance start; run via `./run_net_test.sh`,
   which resolves the current external IP from gcloud and passes it as
   `argv[1]` (`./net_test <ip>` works directly too; default is the old IP).
