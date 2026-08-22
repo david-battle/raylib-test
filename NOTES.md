@@ -64,6 +64,9 @@ timeout 5 python3 -c "import socket;s=socket.socket(socket.AF_INET,socket.SOCK_D
   lowpass 700, γ=0.35 compressed, +3 semitones; replaces the celebratory
   chirp `target.ogg` used to be. `weird.wav` (sprite shoot) is the original
   sped 1.84x and pitched down 6 semitones (full sweep kept, not trimmed).
+  `ping_send.wav` (UDP ping send) is synthesized: sox sine sweep 900→450 Hz,
+  0.12 s, short fades, normalized −3 dB. Descending on purpose — the receive
+  coin rises, so the pair reads as out/back.
 
 ## Custom cursor on WSLg — SOLVED (was a rat hole)
 

@@ -249,6 +249,7 @@ int main(int argc, char **argv) {
 
     InitAudioDevice();
     Sound echoSound = LoadSound("resources/coin.wav");
+    Sound sendSound = LoadSound("resources/ping_send.wav");
     Sound clickSound = LoadSound("resources/buttonfx.wav");
     Sound shootSound = LoadSound("resources/weird.wav");
     Sound hitCursorSound = LoadSound("resources/hit_splat.wav");
@@ -663,6 +664,7 @@ int main(int argc, char **argv) {
         if (IsKeyPressed(KEY_SPACE)) {
             const char* msg = "ping";
             if (sendto(sock, msg, strlen(msg), 0, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) < 0) { perror("sendto failed"); }
+            PlaySound(sendSound);
             packetsSent++;
         }
 
@@ -973,6 +975,7 @@ int main(int argc, char **argv) {
     }
 
     UnloadSound(echoSound);
+    UnloadSound(sendSound);
     UnloadSound(clickSound);
     UnloadSound(shootSound);
     UnloadSound(hitCursorSound);

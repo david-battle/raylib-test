@@ -17,7 +17,7 @@ audio, networking, and fullscreen behavior. Keep changes small.
   shutout). Win screen plays `resources/country.mp3` until a key is pressed;
   shutouts ("Sprite: 0") get extra confetti. Ping and click-box UI is compiled
   out by default; build with `-DSHOW_UI` to restore. Plays `resources/` sounds
-  for shooting, hits, clicks, and UDP echo replies. Rendering goes through an
+  for shooting, hits, clicks, UDP pings, and UDP echo replies. Rendering goes through an
   embedded GLSL 330 bloom pipeline (shader strings in main.c; HUD draws after
   composite). WSLg presents render-target chains Y-mirrored — the un-flip in
   the composite shader must stay (see NOTES.md). The echo server IP is
