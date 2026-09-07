@@ -16,11 +16,17 @@
 // Kept separate from main.c because Xlib's Font type clashes with raylib's.
 // Do NOT call raylib's HideCursor() alongside this: on X11 it installs
 // GLFW's own cursor, overriding this one.
-void HideCursorX11(void *handle) {
+void HideCursorX11Shape(void *handle, unsigned int shape) {
     Display *dpy = XOpenDisplay(NULL);
     if (!dpy) return;
-    Cursor reticle = XCreateFontCursor(dpy, XC_target);
+    Cursor reticle = XCreateFontCursor(dpy, shape);
     XDefineCursor(dpy, *(Window *)handle, reticle);
     XFlush(dpy); // definition lives in the X server; safe to disconnect
     XCloseDisplay(dpy);
+}
+
+// Default: the "target" reticle (circle-with-dot), which doubles as the aim
+// marker for main.c.
+void HideCursorX11(void *handle) {
+    HideCursorX11Shape(handle, XC_target);
 }

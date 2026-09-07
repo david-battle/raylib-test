@@ -5,9 +5,11 @@ audio, networking, and fullscreen behavior. Keep changes small.
 
 ## Conventions
 
-- If the user sends any message after the agent started `net_test`, assume
-  they killed it — verify with `pgrep -x net_test` instead of assuming it's
-  still running.
+- If the user sends any message after the agent started a program (e.g.
+  `net_test`), assume they exited it — verify with `pgrep` instead of assuming
+  it's still running. If a fresh copy needs to run and the old one is still
+  alive, silently kill it first; never ask, and never offer to kill it. The
+  user can kill programs themselves and won't request permission.
 
 ## Files
 
