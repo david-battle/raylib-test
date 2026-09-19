@@ -202,3 +202,99 @@ Rules that keep it working:
   - `rres` (raysan5/rres): official asset-packing system; rTexGen packs many
     sprites into a single atlas file loaded in one call.
   - Language bindings sometimes add wrappers (e.g. raylib-ruby `Sprite`).
+
+## 3D models / custom lighting (ico.c) — gotchas
+
+- This raylib 6.1 build's default model fragment shader has NO lighting:
+  it's just `texelColor*colDiffuse*fragColor`. `DrawModel()` alone renders
+  flat unshaded. For lit 3D you must supply a custom shader like ico.c's.
+- `normalMatrix` is NOT wired up by this build: declaring it in a vertex
+  shader leaves it at the zero matrix, and `mat3(zero)*normal` zeroes all
+  fragment normals — result looks like flat ambient only, indistinguishable
+  from a missing uniform, on every face. Use `mat3(matModel)` instead
+  (fine for pure-rotation transforms; ico.c's tilt has no scale).
+- `SetShaderValue` targets whatever program is currently bound. Set custom
+  uniforms INSIDE `BeginShaderMode(material.shader)` before the draw, not at
+  init (the default shader is active then, so the value silently goes
+  nowhere useful).
+- `DrawModel` + `DrawModelWires` with the SAME material works for black
+  edges: the wire pass tints colDiffuse black, and depth test is LEQUAL so
+  the co-planar edges draw over the faces. In the fragment shader, gate
+  specular on base luminance or wire edges get a white sheen.
+- WSLg/D3D12: neither ffmpeg `x11grab` nor raylib `TakeScreenshot`/
+  `LoadImageFromScreen` read the fullscreen GL window's backbuffer (they
+  return wrong-resolution black/all-desktop pixels). To verify a render,
+  draw into an offscreen `LoadRenderTexture`, then
+  `LoadImageFromTexture(rt.texture)` + `ImageFlipVertical` + `ExportImage`.
+- Icocahedron geometry (vertex order guaranteeing outward-facing cross
+  products) lives in `ico.c` MeshIcosahedron(); the golden-ratio vertex set
+  and 20-face index table there were validated numerically.
+
+## ico.c — 1/6-cell placement and MSAA (2026-09)
+
+- Top-left 1/6-cell placement: shift BOTH `camera.position` and
+  `camera.target` by the same (camX, camY) so the view axis passes through
+  the cell center. Object stays straight-on (no skew) and rotation semantics
+  (world-axis spin about -Z view) are unchanged. Shift distances:
+  `pps = (sh/2)/(dist*tan(fov/2))`, `camX = (sw/2 - cx)/pps`,
+  `camY = (cy - sh/2)/pps` with (cx,cy) the cell center. The camY sign is
+  the "wrong" one deliberately — the naive `(sh/2-cy)/pps` lands the object
+  in the bottom-left cell because of the y-flip in screen projection.
+- Off-axis camera breaks the symmetric worst-case bound: a corner that swings
+  toward the camera at an off-center position magnifies more than
+  `(sw/2)/tan/sqrt(dist^2-1)` predicts, and an early version of that formula
+  UNDER-fitted (silhouette spilled past the cell). Empirically (offline
+  Python scan over a 5° rotation grid, incl. the camera offset) the true
+  worst-case width still scales as `1/sqrt(dist^2-1)` but with a widest-pair
+  factor F ≈ 2.168 baked into the camera-distance formula in `ico.c`. Width
+  (not height) is the binding constraint for a 640x540 cell. Measured:
+  worst-width 575px (90% of cell) and home-tilt bbox 513x254 at dist 10.0.
+- Perspective (near-corner magnification) pushes the silhouette bbox ~55px
+  right of the cell's geometric center at the home tilt: expect the object
+  to read slightly off-center toward the screen middle, not pixel-centered.
+- Edge aliasing fix that WORKS on WSLg/Mesa-D3D12: `SetConfigFlags(
+  FLAG_MSAA_4X_HINT)` before `InitWindow` (4x MSAA). Single-pixel stairsteps
+  on near-horizontal/vertical edges are gone in the real window.
+- Caveat: the offscreen `LoadRenderTexture` verification route does NOT get
+  MSAA — exported check images still show aliased edges even when the actual
+  window is smooth. Don't judge smoothing from those exports.
+- Black `DrawModelWires` pass was removed: with flat per-face normals the
+  facets read clearly by tone alone, no edge lines needed.
+
+## polyhedron_attack.c — flat playfield lessons (2026-09)
+
+- **Designing "2D" gameplay in 3D**: the first draft kept the ico.c top-down
+  3D camera and let invaders approach from depth (z) while bullets rose in y.
+  Result was confusing/disorienting. Fix that holds up: put ALL actors on one
+  plane (z=0), camera straight-on (`pos (0,0,28)`, `target (0,0,0)`), and do
+  every kind of motion in x/y only. Solids keep their 3D shading, but
+  gameplay reads as pure 2D and silhouettes are constant size.
+- **Player tetrahedron**: the user wanted a D4 resting on a flat face, apex
+  up, bullets out of the apex. Gotcha: a rotation about the world Y axis does
+  NOT preserve mirror symmetry about the x=0 plane (Ry and the x-mirror don't
+  commute), so choosing the up-rotation by eye always left an off-center
+  silhouette. Fix: bake the resting, left-right-symmetric pose straight into
+  the mesh generator — apex `(0,1,0)`; base face at y=-1/3 with two mirrored
+  vertices at x=±0.8165 and one on-axis vertex at x=0, all at radius 1. No
+  model.transform needed, silhouette is a clean isosceles triangle, and a
+  center facet ridge reads as a pyramidal face. Player must NOT tumble
+  (attackers spinning is fine and looks good).
+- **Clip fixes**: (1) cover cubes were `2×2.2×1.4` (read as tall planks) and
+  their two stacked cubes overlapped — make them true cubes (2×2×2) and space
+  centers ~0.2+ apart. (2) the full-size player tetra (radius 1) apexed
+  exactly at the bottom cover face — shrink it (scale 0.7) and sit it lower.
+  (3) the saucer sphere at y=8.8 clipped the top invader row (starts y≈7–8)
+  — give the saucer its own dedicated track above the formation (y≈9.2) and
+  enlarge the backdrop panel to hold it.
+- **Growing waves**: formation size is computed from a `wave` counter
+  (`SetDifficulty()`: cols 6→7, rows 4→6, capped 7×6=42) instead of fixed
+  5×4; a fresh formation only respawns after a ~1.5s pause, which removed the
+  "attackers suddenly rush you" feel.
+- **Agent process-kill gotcha**: `pkill -f polyhedron_attack` matched the
+  agent's own bash command line (it contains the pattern) and killed the
+  shell doing the kill → the tool call hung until timeout. Always kill by
+  truncated comm name instead: `pkill -x polyhedron_atta` (process names are
+  capped at 15 chars; the binary is untruncated when you just launch it).
+- Saucer spawn intervals started as 6–13s (felt too frequent); raised to
+  20–34s first spawn, 15–33s afterwards. `coin.wav` on spawn read as a bonus
+  fanfare.

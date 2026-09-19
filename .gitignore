@@ -3,3 +3,5 @@ fullscreen_test
 net_test
 *.o
 cell
+ico
+polyhedron_attack

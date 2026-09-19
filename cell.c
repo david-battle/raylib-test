@@ -347,6 +347,29 @@ static void CutSelection(Grid *g) {
             CellSet(g, x, y, 0);
 }
 
+// Gosper glider gun — plaintext rows, X = live (state 1), each row 36 wide.
+static const char *GosperGliderGun[] = {
+    "........................X...........",
+    "......................X.X...........",
+    "............XX......XX............XX",
+    "...........X...X....XX............XX",
+    "XX........X.....X...XX..............",
+    "XX........X...X.XX....X.X...........",
+    "..........X.....X.......X...........",
+    "...........X...X....................",
+    "............XX......................",
+};
+static void GliderGunClipboard(void) {
+    const int W = 36, H = 9;
+    ClipFree(&gClip);
+    gClip.w = W;
+    gClip.h = H;
+    gClip.cells = malloc((size_t)W * H * sizeof(int));
+    for (int y = 0; y < H; y++)
+        for (int x = 0; x < W; x++)
+            gClip.cells[y * W + x] = (GosperGliderGun[y][x] == 'X') ? 1 : 0;
+}
+
 static void PasteClipboard(Grid *g, Vector2 screen, double camX, double camY, float zoom) {
     if (!gClip.cells) return;
     int tx, ty;
@@ -472,23 +495,10 @@ int main(int argc, char **argv) {
     Vector2 dragLast = { 0, 0 };
     int cursorShape = XC_circle;
 
-    // Test fill: every cell covering the screen at 32px/cell gets a random
-    // non-empty state; everything beyond stays empty.
     int sw = GetScreenWidth(), sh = GetScreenHeight();
-    int minX = (int)floorf(-sw / (2.0f * 32.0f));
-    int maxX = (int)ceilf(sw / (2.0f * 32.0f)) - 1;
-    int minY = (int)floorf(-sh / (2.0f * 32.0f));
-    int maxY = (int)ceilf(sh / (2.0f * 32.0f)) - 1;
-    for (int y = minY; y <= maxY; y++)
-        for (int x = minX; x <= maxX; x++) {
-            int lr = rand() % 3, lg = rand() % 3, lb = rand() % 3;
-            if (lr == 0 && lg == 0 && lb == 0) lr = 1;
-            CellSet(&grid, x, y, lr | (lg << 2) | (lb << 4));
-        }
-
     bool showHud = true;
     int frame = 0;
-    bool paused = false;
+    bool paused = true;
     double gensPerSec = 5.0;
     double timer = 0.0;
     bool periodActive = false;
@@ -525,7 +535,7 @@ int main(int argc, char **argv) {
             periodActive = false;
             periodAcc = 0.0;
         }
-        if (IsKeyPressed(KEY_KP_ADD)) { gensPerSec *= 1.5; if (gensPerSec > 240.0) gensPerSec = 240.0; }
+        if (IsKeyPressed(KEY_KP_ADD)) { gensPerSec *= 1.5; if (gensPerSec > 2400.0) gensPerSec = 2400.0; }
         if (IsKeyPressed(KEY_KP_SUBTRACT)) { gensPerSec /= 1.5; if (gensPerSec < 0.05) gensPerSec = 0.05; }
         if (!paused) {
             timer += GetFrameTime();
@@ -555,15 +565,16 @@ int main(int argc, char **argv) {
         }
 
         // Pan: WASD / arrows, plus middle-button drag. Left drag selects; a bare
-        // click cancels the selection (or cycles red if none). Click vs drag
-        // is decided by how far the pointer moved (~5px).
+        // click pastes the copy/cut buffer at the cursor (or cycles red if the
+        // buffer is empty). Click vs drag is decided by how far the pointer
+        // moved (~5px).
         float pan = 1200.0f / zoom * GetFrameTime();
         if (IsKeyDown(KEY_D) || IsKeyDown(KEY_RIGHT)) camX += pan;
         if (IsKeyDown(KEY_A) || IsKeyDown(KEY_LEFT)) camX -= pan;
         if (IsKeyDown(KEY_S) || IsKeyDown(KEY_DOWN)) camY += pan;
         if (IsKeyDown(KEY_W) || IsKeyDown(KEY_UP)) camY -= pan;
 
-        // ---- Left: drag to select; click cancels selection or cycles red ----
+        // ---- Left: drag to select; click pastes or cycles red ----
         if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
             leftHeld = true;
             leftDrag = false;
@@ -586,8 +597,8 @@ int main(int argc, char **argv) {
             if (leftDrag) {    // finished a selection drag
                 gSelActive = false;
                 gHasSel = true;
-            } else if (gHasSel) {
-                gHasSel = false;   // single click cancels selection
+            } else if (gClip.cells) {
+                PasteClipboard(&grid, leftPress, camX, camY, zoom);
             } else {
                 CycleChannel(&grid, leftPress, 0, camX, camY, zoom);
             }
@@ -625,6 +636,7 @@ int main(int argc, char **argv) {
         if (ctrl && IsKeyPressed(KEY_C)) CopySelection(&grid);
         if (ctrl && IsKeyPressed(KEY_X)) CutSelection(&grid);
         if (ctrl && IsKeyPressed(KEY_V)) PasteClipboard(&grid, mouse, camX, camY, zoom);
+        if (IsKeyPressed(KEY_G)) GliderGunClipboard();
 
         // Cursor: crosshair while drag-selecting, move-cursor (fleur) while a
         // cut/copy buffer preview is showing, else the circle. Swap on change.

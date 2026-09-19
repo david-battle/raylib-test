@@ -30,6 +30,42 @@ audio, networking, and fullscreen behavior. Keep changes small.
   procedurally at load.
 - `audio_test.c` — plays a sound file given as a path argument, capped at 5s
   (no window needed; avoids `WaitTime` which hangs without one).
+- `ico.c` / `ico` — fullscreen display of all five platonic solids plus a
+  sphere, one per cell of an implicit 3x2 grid (6 sections). Ordered by
+  increasing face count left-to-right / top-to-bottom: tetrahedron (4), cube
+  (6), octahedron (8), dodecahedron (12), icosahedron (20), sphere. Each has a
+  distinct jewel tone (ruby, emerald, sapphire, amethyst, topaz, citrine).
+  Meshes are procedurally generated flat-shaded polyhedra (tetra/cube/octa/
+  icosa vertex-face tables in source; dodecahedron built at runtime as the
+  icosahedron's dual); custom GLSL 330 lighting shader. Uses the `cell.c`-style
+  external-monitor fullscreen setup; each cell gets its own on-axis camera so
+  objects scale identically. `Tab` cycles which section the arrow keys rotate
+  (left/right spin about the vertical axis, up/down tip about the horizontal);
+  a thick dark box marks the active cell. ESC exits.
+- `polyhedron_attack.c` / `polyhedron_attack` — fullscreen Space Invaders-style
+  shooter reusing the `ico.c` shader + mesh machinery. A 5x4 formation marches
+  side to side and descends; the top two rows are dodecahedrons (50 pts), the
+  bottom two octahedrons (30 pts). A golden sphere saucer occasionally flies
+  across the top (200 pts). The player is a blue tetrahedron at the bottom,
+  moved with left/right arrows, firing a single cylinder bullet with SPACE;
+  enemy cylinders drop from surviving attackers. Steel-grey cube bunkers (four
+  sites, two cubes tall, 2 hp each) block and erode. 3 lives with a 2s respawn
+  shield; clearing a wave pays +500; ENTER restarts after game over. Borrows
+  `resources/` sounds like `main.c` (`weird.wav` while firing, `hit_splat.wav`
+  on kills, `buttonfx.wav` on cover dents, `boom.wav` on player hit, a quiet
+  `ping_send.wav` per enemy shot, `coin.wav` when the saucer spawns). Build
+  with the same `gcc -I ~/raylib/src ... libraylib.a -lm -lpthread -ldl -lX11`
+  line as `ico`.
+- `cell.c` / `cell` — fullscreen Conway's Life editor with a sparse, unbounded
+  grid (only non-empty cells stored; max ~2^53 coordinate range via double
+  camera in `main.c`-style fullscreen setup). 3-color states (red/green/blue)
+  cycled per channel on left/middle/right click; color is a passive layer.
+  Left-drag selects a rect (animated dashed box), Ctrl+C/X copy/cut it into an
+  internal clipboard, and Ctrl+V or a bare left click paste it (paste writes
+  only live cells). Press `G` to load the Gosper glider gun (36x9) into the
+  clipboard. Numpad +/- scales gens/sec (cap 2400), space pauses, `.` single-
+  steps, Q clears clipboard/selection, F1 toggles HUD. Compiles against
+  `~/raylib` and `hide_cursor_x11.c`, run as `./cell`.
 - `hide_cursor_x11.c` — replaces the system cursor with the X cursor-font
   `XC_target` reticle on WSLg (true invisibility impossible; see `NOTES.md`).
   Must not call raylib's `HideCursor()`, which would override it. `main.c`
