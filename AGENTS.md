@@ -66,7 +66,11 @@ audio, networking, and fullscreen behavior. Keep changes small.
   target view. Two things NOT to undo: the shader maps pixels via
   `gl_FragCoord/res`, never `fragTexCoord` (raylib 6's `DrawRectangle` emits
   shapes-atlas UVs), and the framebuffer size comes from
-  `GetRenderWidth/Height()` per frame, not `GetScreenWidth()`.
+  `GetRenderWidth/Height()` per frame, not `GetScreenWidth()`. Colour is
+  escape-time hue (`nu/maxIter`) plus a depth-faded per-iteration band term
+  keyed on `nu` itself — key it on `nu/maxIter` instead and every view washes
+  out, because the escape counts on screen sit far below the cap. Don't
+  normalise it away; reasoning and measurements in `NOTES.md`.
   Precision: shallow views run in plain float32 (~60 fps); past
   `PRECISE_ZOOM` (2e4 zoom) the same shader runs the orbit in real fp64
   (`dvec2`, `#version 400 core`, `P` forces it) and is membership-exact to

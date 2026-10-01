@@ -444,3 +444,11 @@ Rules that keep it working:
   the expected 1-iteration smooth-count offset; the rest is chaotic
   amplification, which separates any two correct renderers at that depth.
   Keep `refq.c`'s colouring in sync with the shader or this metric is nonsense.
+
+- The verification tooling is throwaway and lives outside the repo in
+  `/tmp/opencode/mtest` (`mkharness.py` renders any candidate copy of
+  `mandelbrot.c` headless at a given centre/span/zoom/iterations,
+  `refq*.c` renders the CPU `__float128` reference, `cmp.py` diffs the two).
+  It is not committed and `/tmp` is not preserved, so expect to rewrite it.
+  Patch a candidate shader by rewriting the C string literal in the *copy*,
+  then point `mkharness.py` at that copy — it reads the path it is given.
