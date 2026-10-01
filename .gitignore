@@ -4,4 +4,5 @@ net_test
 *.o
 cell
 ico
+mandelbrot
 polyhedron_attack

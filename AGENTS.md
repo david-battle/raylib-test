@@ -56,6 +56,27 @@ audio, networking, and fullscreen behavior. Keep changes small.
   `ping_send.wav` per enemy shot, `coin.wav` when the saucer spawns). Build
   with the same `gcc -I ~/raylib/src ... libraylib.a -lm -lpthread -ldl -lX11`
   line as `ico`.
+- `mandelbrot.c` / `mandelbrot` — fullscreen Mandelbrot explorer computed per
+  pixel by one fullscreen fragment shader drawn straight into the backbuffer
+  (no RenderTexture, so the WSLg RT Y-mirror doesn't apply; raylib's OpenGL
+  backend has no compute shaders). Smooth/continuous escape-time hue, interior
+  black. Wheel zooms toward the cursor, left-drag pans, SPACE resets to the
+  whole set, F1 toggles the HUD, +/- override the iteration limit, `A` hands it
+  back to auto, `P` forces the precision path. Drawn view glides toward the
+  target view. Two things NOT to undo: the shader maps pixels via
+  `gl_FragCoord/res`, never `fragTexCoord` (raylib 6's `DrawRectangle` emits
+  shapes-atlas UVs), and the framebuffer size comes from
+  `GetRenderWidth/Height()` per frame, not `GetScreenWidth()`.
+  Precision: shallow views run in plain float32 (~60 fps); past
+  `PRECISE_ZOOM` (2e4 zoom) the same shader runs the orbit in real fp64
+  (`dvec2`, `#version 400 core`, `P` forces it) and is membership-exact to
+  1e-12 span at ~130-230 ms/frame. Do NOT "optimise" that path back into
+  double-single hi/lo float pairs — this GPU's GLSL compiler folds the
+  `twoSum` error-free transform away, so DS silently degrades to float32.
+  raylib has no double uniform API: the file includes `external/glad.h` and
+  sets the `dvec2` uniforms with `glUniform2d`. Measurements in `NOTES.md`.
+  Builds with the same gcc line as `ico`; run as `./mandelbrot`.
+
 - `cell.c` / `cell` — fullscreen Conway's Life editor with a sparse, unbounded
   grid (only non-empty cells stored; max ~2^53 coordinate range via double
   camera in `main.c`-style fullscreen setup). 3-color states (red/green/blue)
@@ -83,8 +104,9 @@ audio, networking, and fullscreen behavior. Keep changes small.
 
 Binaries are compiled by statically linking against the sibling raylib clone at
 `~/raylib` (`src/raylib.h`, `src/libraylib.a`). Compiled binaries
-(`audio_test`, `fullscreen_test`, `net_test`, `*.o`) are gitignored; commit
-source only. `net_test` also compiles `hide_cursor_x11.c` (see `NOTES.md`).
+(`audio_test`, `fullscreen_test`, `net_test`, `mandelbrot`, `*.o`) are
+gitignored; commit source only. `net_test` also compiles `hide_cursor_x11.c`
+(see `NOTES.md`).
 
 ## Echo server (for `main.c`)
 

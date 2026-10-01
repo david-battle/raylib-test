@@ -298,3 +298,116 @@ Rules that keep it working:
 - Saucer spawn intervals started as 6–13s (felt too frequent); raised to
   20–34s first spawn, 15–33s afterwards. `coin.wav` on spawn read as a bonus
   fanfare.
+
+## mandelbrot.c — GPU fractal explorer (2026-10)
+
+- **Do NOT use `fragTexCoord` as the screen position.** raylib 6.x with
+  `SUPPORT_QUADS_DRAW_MODE` makes `DrawRectangle` emit the *shapes atlas*
+  texcoords (`rlSetTexture(GetShapesTexture().id)` + `shapeRect/texShapes`,
+  see rshapes.c DrawRectanglePro), not 0..1 across the quad — so a fullscreen
+  shader fed by the varying samples a tiny sub-window of the atlas. Symptom:
+  no black interior anywhere, just a smooth orange gradient (the first build of
+  this file rendered "a plausible field of escapes" and nothing else).
+  `gl_FragCoord.xy / res` is the robust screen position, with `res` a uniform.
+- **`GetScreenWidth()` != the framebuffer right after `SetWindowMonitor()`.**
+  raylib logged screen 1920x1080 while the actual drawable was 1680x1050, so a
+  `res` uniform captured at startup stretches the whole map. Query
+  `GetRenderWidth()/GetRenderHeight()` (they match gl_FragCoord) every frame
+  and recompute aspect + home span on change.
+- **Verification without being able to see the screen**: dump the backbuffer
+  with `TakeScreenshot()` (works, unlike x11grab on WSLg), `ffmpeg -f rawvideo`
+  to RGB, then point-test against a double-precision CPU reference — sample
+  random (re, im), map to a pixel, compare "black == inside set". The home view
+  scored 0.997 (the one miss was a pixel on the boundary). A transposed mapping
+  scored 0.871 and a flipped-y mapping 0.997 — Mandelbrot is conjugate-symmetric,
+  so **a y-flip cannot be detected this way or by eye**; y symmetry is a free
+  pass, not evidence of correctness.
+- **Measured limits** (1680x1050, 2080 Super, D3D12/Mesa): 2000 iters = 16.7 ms,
+  10000 = 17.1 ms, 20000 = 23 ms. float32 in the shader matches a double
+  reference pixel-for-pixel at 2.7e5 zoom (span 1e-5) and 95% at 2.7e6 — so the
+  *iteration budget*, not precision, is the real wall: at span 1e-5 the
+  Seahorse valley still needs >300k steps. Past the auto cap the view just
+  fills black, which looks like a rendering bug but is the cap.
+- Drawing straight to the backbuffer (no RenderTexture) sidesteps the
+  WSLg/D3D12 RT Y-mirror problem entirely — don't "fix" it by adding an RT hop.
+- **Naive float32 escape-time rendering streaks past ~1e5 zoom** (this is the
+  "small wide rectangles instead of pixels" report). Ruled out, in order:
+  1. Not a block/draw artifact: framebuffer dumps at span 1e-3/1e-4 have ~1px
+     run lengths and 2x2-identical fractions consistent with per-pixel noise.
+  2. Not the Mesa/D3D12 driver: a **single-precision CPU** render of the same
+     view reproduces the anisotropy almost exactly (mean|dy|/mean|dx| = 3.06
+     CPU-float vs 3.03 GPU at span 1e-5; a double-precision CPU render of the
+     same view gives 1.00).
+  3. Not the bailout radius: |z|>16, 256 and 512 all give anisotropy 3.06 —
+     the orbit stays O(1) for these pixels, so the round-off is per-step
+     relative error amplified by the chaotic derivative, not escape-tail
+     magnitude. Direction matters because the unstable direction at this
+     boundary point is horizontal.
+  So the wall is float32 itself: ~7 digits of mantissa buys ~1e5 zoom with
+  smooth coloring (measured clean at span 1e-4 = 2.7e4 zoom, broken at 1e-5 =
+  2.7e5). Membership (inside/outside) still agrees with a double reference at
+  2.7e5 — only the *color* is noise, so tests that only check membership will
+  call a broken image correct. Fixing it properly means perturbation theory
+  (reference orbit + rebase) or double-single arithmetic in the loop, ~5x the
+  ALU; `mandelbrot.c` warns "past the float32 wall" in the HUD instead.
+
+### fp64 deep-zoom path (supersedes the double-single attempt)
+
+- **Use real fp64 (`dvec2`) in the fragment shader, not double-single (hi/lo
+  float pairs).** DS needs error-free transforms, and this GPU's GLSL compiler
+  *folds `twoSum` away*: a probe whose residual must be nonzero —
+  `(1-(s-bb))+(1e-9-bb)` with `s = fl(1+1e-9) = 1.0`, `bb = 0` — emitted 0,
+  while the `twoProd` residual in the same shader survived (binary step test:
+  twoProd 255, twoProdTemp 255, twoSum 0). The algorithm was not at fault: the
+  identical C mirror, including *both* `twoSum(p1.x-p2.x)` and the `twoProd`
+  residuals `p1.y ± p2.y`, matches `__float128` at span 1e-5 (colour error 0.3,
+  vs float32's 22.8). Note that patching only the `twoSum` residual (keeping
+  `hi = p1.x - p2.x`) reproduces the float32 floor exactly: dropping either
+  residual is what quantises the orbit. A driver that reassociates additions
+  cannot be trusted with EFTs; fp64 needs none, and is less code.
+- **fp64 requires `#version 400 core`**, and `precise` is a reserved word from
+  GLSL 400 on, so the path-switch uniform is `useDouble`. GLSL 330 has no
+  doubles and no `fma()` (compile error: "no function with name 'fma'").
+- **raylib 6 has no double uniform API**: neither `SetShaderValue` nor
+  `rlSetUniform` handles doubles, and client code gets no GL prototypes at all
+  (rlgl.h includes glad.h only for its own build — `GRAPHICS_API_OPENGL_33` is
+  not defined for consumers, so `glUniform2d` is an implicit-declaration
+  error). Fix: `#include "external/glad.h"` in `mandelbrot.c` and call
+  `glUniform2d` inside `BeginShaderMode()`. `glad_glUniform2d` is exported from
+  libraylib.a and filled in by GLAD's GL 4.0 loader.
+- **Measured accuracy** (1680x1050, D3D12/Mesa, centre -0.743643887037151
+  0.131825904205330, against a `__float128` CPU reference; membership errors
+  out of 30000 px, then mean channel error over shared escaping pixels):
+
+  | span (zoom) | fp64 | float32 |
+  |---|---|---|
+  | 1e-3 (3e3) | not needed | 0 err, 8.8 |
+  | 1e-4 (3e4) | 0 err, 0.62 | 54 err, 18.2 |
+  | 1e-5 (3e5) | 16/120000, 1.05 | 2533/120000, 50.1 |
+  | 1e-8 (3e8) | 0 err, 1.24 | streaked |
+  | 1e-10 | 0 err, 4.24 | streaked |
+  | 1e-12 | 0 err, 11.27 | streaked |
+
+  fp64 is membership-exact through 1e-12; only the colour error grows (float
+  smooth-colour maths plus fp64 rounding). Auto crossover `PRECISE_ZOOM 2e4` sits
+  where float32 starts to break.
+- **The fp64 iteration cap is nearly free** — frame cost tracks the *average*
+  escape count, not `maxIter`: at span 1e-8, 8000 iterations and 1e6 iterations
+  both cost ~135 ms/frame, because only pixels that never escape pay for the
+  cap. So `PRECISE_ITER` went 4000 -> 40000 and `AutoIterations` is no longer
+  truncated (it wants 7427 at 1e-5, 11414 at 1e-8, 16729 at 1e-12). Cost:
+  ~26-30 ms/frame float32 shallow, ~130-230 ms/frame fp64 deep at 1680x1050.
+- **Screenshot/reference comparisons must flip rows.** `TakeScreenshot` output
+  is top-down and the view maps growing `im` upward, so reference row `Y0+j` is
+  PNG row `H-1-(Y0+j)`; the crop is `[H-Y0-CH : H-Y0]`, then reversed. The trap:
+  the per-row brightness profile correlates ~0.99 in *both* orientations (the
+  profile is nearly symmetric), so a row-profile check happily passes while
+  every pixel comparison is garbage — only asymmetric crops (off-axis view,
+  deep enough to have vertical structure) expose it. Calibrate the comparison
+  on a shallow off-axis view at low iterations first, where float32 and
+  `__float128` agree exactly.
+- The CPU reference renderer also had its float32 mode left on the pre-fix
+  `(0.5-uy)` y convention while its double/`__float128` modes used `(uy-0.5)`,
+  so a float32 reference matched a *broken* GPU image. All modes must use the
+  same convention; check `double vs __float128` agreement (0.19 mean channel
+  error at span 1e-5) before trusting any cross-check.
