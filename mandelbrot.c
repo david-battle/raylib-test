@@ -61,7 +61,17 @@ static const char *MANDEL_FS =
     // sqrt() spreads the low-iteration bands out; without it the first few
     // steps eat most of the color wheel.
     "    float t = sqrt(clamp(nu/float(maxIter), 0.0, 1.0));\n"
-    "    vec3 col = hsv2rgb(vec3(fract(t*4.0 + 0.55), 0.78 - 0.38*t, 1.0));\n"
+    // t is normalized by maxIter, but the escape counts actually on screen sit
+    // far below it: measured percentiles of nu against the 40000 cap are
+    // p50/p95 = 97/315 at span 1e-3, 844/- at 1e-6, 1804/4231 at 1e-10, so t
+    // never passes ~0.24 and one hue cycle spans thousands of iterations --
+    // a flat wash. Fade in a per-iteration band term as nu grows, off below
+    // ~400 (shallow views keep the smooth ramp: only 2.2% of pixels move at
+    // span 1e-3) and full by ~1500 (span 1e-6 up), where 1/0.04 = 25
+    // iterations per hue cycle makes neighbouring pixels separable. Measured
+    // 4-pixel-scale contrast at span 1e-10: 11.6 -> 40.3.
+    "    float amp = smoothstep(400.0, 1500.0, nu);\n"
+    "    vec3 col = hsv2rgb(vec3(fract(t*4.0 + 0.55 + amp*nu*0.04), 0.78 - 0.38*t, 1.0));\n"
     // Break up the wide flat gradients that 8-bit output bands badly.
     "    float n = fract(sin(dot(fc, vec2(12.9898, 78.233)))*43758.5453);\n"
     "    return col + (n - 0.5)/255.0;\n"

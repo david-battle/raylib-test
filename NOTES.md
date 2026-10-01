@@ -411,3 +411,36 @@ Rules that keep it working:
   so a float32 reference matched a *broken* GPU image. All modes must use the
   same convention; check `double vs __float128` agreement (0.19 mean channel
   error at span 1e-5) before trusting any cross-check.
+
+### Colour collapses at depth (the `nu/maxIter` trap)
+
+- Reported as "all the colours look the same near the zoom limit". The cause is
+  the normalisation, not the palette: `t = sqrt(nu/maxIter)` is scaled by the
+  iteration *cap*, but the escape counts actually on screen sit far below it.
+  Measured percentiles of `nu` on screen at `maxIter=40000`:
+  p50/p95 = 97/315 at span 1e-3, 844/- at 1e-6, 1804/4231 at 1e-10,
+  2207/4677 at 1e-12. So `t` never passes ~0.24, `fract(t*4+0.55)` uses barely
+  a quarter of the wheel, and one hue cycle spans thousands of iterations
+  (~15000 at span 1e-10) — neighbours are indistinguishable.
+  Note this is not a deep-only bug: it is true at every zoom, it just becomes
+  obvious once the fine structure appears.
+- Fix: fade in a per-iteration band term with `nu` itself as the clock, which
+  needs no calibration —
+  `amp = smoothstep(400, 1500, nu)`, hue `fract(t*4 + 0.55 + amp*nu*0.04)`.
+  Off below ~400 so shallow views keep the smooth ramp, full by ~1500 (span
+  1e-6 up), where one hue cycle = 1/0.04 = 25 iterations.
+  Measured 4-pixel-scale contrast at span 1e-10: 11.6 -> 40.3 (3.5x), with
+  only 2.2% of pixels moved at span 1e-3 (mean channel 1.7) and 5.7% at 1e-4.
+  Ramps of smoothstep(120,600) / (300,1200) / (250,1000) were also measured:
+  they change shallow views 8-19% for no extra deep gain, so (400,1500) is the
+  right knee. `0.04` is the knob for band width — 0.02 wider, 0.08 finer.
+- **Banding invalidates the colour half of the reference comparison.** Mean
+  channel distance vs the CPU reference at span 1e-10 went 4.24 -> 34.76 while
+  membership stayed exact (0/30000): a hue band is 25 iterations wide, so a
+  +/-1 iteration difference between two correct renderers now shows up as a
+  visible band. Compare *membership*, or compare raw `nu` (dump the shader's
+  `nu` as two base-251 digits and diff against the CPU counts). At span 1e-10
+  the GPU's `nu` matches the CPU median exactly and ~39% of pixels land within
+  the expected 1-iteration smooth-count offset; the rest is chaotic
+  amplification, which separates any two correct renderers at that depth.
+  Keep `refq.c`'s colouring in sync with the shader or this metric is nonsense.
