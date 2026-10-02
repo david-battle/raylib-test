@@ -97,7 +97,9 @@ audio, networking, and fullscreen behavior. Keep changes small.
   STRICTLY `m > 4`: c=-2's orbit sits at |z|=2 exactly forever, so a "reject
   if not m < 4" guard loses the left tip. Sanity-check any such test against
   c=-2 (inside) and -2.000001 / 0.2500001 (outside).
-  Builds with the same gcc line as `ico`; run as `./mandelbrot`.
+  Builds with the same gcc line as `ico`; run as `./mandelbrot`. This program
+  stops at span ~1e-13; the perturbation renderer that goes past it (to 1e-50)
+  is in `../mandelbrot_pert`, which does not modify `mandelbrot.c`.
 - `mandelbrot_ref.c` / `mandelbrot_harness.py` / `mandelbrot_check.py` —
   verification trio for the shader, use before believing any change to it.
   `mandelbrot_ref.c` is a CPU oracle (same orbit + colouring, in float32 /
@@ -111,39 +113,6 @@ audio, networking, and fullscreen behavior. Keep changes small.
   membership errors plus the mean channel error. Read `mem`, not the colour
   number, on deep views: see `NOTES.md` for why, and for the RGBA/top-down vs
   RGB/bottom-up row trap.
-
-- `pert.c` / `pert_ref.c` / `pert_verify.sh` — perturbation Mandelbrot, the deep
-  zoom path. `pert.c` renders `c = c0 + delta`, `z_n = Z_n + w_n` with `Z`
-  shared across the frame as a `1024x1024` RGBA32F `sampler2D` (one
-  `texelFetch` per iteration, NEAREST) and `delta` formed from the exact
-  integer pixel offset, never `uv-0.5`. `mandelbrot.c` is deliberately not
-  touched. fp64 path is membership-exact against the `__float128` oracle from
-  span 1e-6 to **1e-50**; fp32 survives to ~1e-33 and then underflows. Build
-  with the same gcc line as `ico`, run as `./pert`. Two things not to undo: the
-  reference must be a point whose orbit *survives* (an escaping one silently
-  truncates every pixel's loop to the same count), and `--shot` must not draw
-  the HUD, because `mandelbrot_check.py` reads membership off the colour image
-  and glyphs inside the crop read as render errors — that cost hours and looks
-  exactly like a numerical band failure. Verify with
-  `CROP=120 SPANS="1e-6 1e-20" ./pert_verify.sh 480 270`; read `mem`, not
-  `mean|d|`, past ~1e-4 -- but only where `mem` means something. At c=-1.7497 the
-  whole frame is exterior for spans <=1e-8 (`interior 0/14400` at every offset),
-  so `mem 0` from two paths agreeing just means both found nothing; check
-  `interior` is non-trivial before believing any membership number, and fall back
-  to banding error. When the viewer stalls, flickers or renders less than it
-  should, read the `state:` (every 120 frames) and `change:` (only when `iter`,
-  `path` or `refMax` actually changes) trace lines in the log before touching
-  anything -- with a static view those three are the only quantities that can
-  vary, and they found two bugs that looked like the governor's fault. `pkill -x pert` before verifying: a second fullscreen
-  instance contends for the GPU and makes shots segfault or dump half-rendered
-  frames, which looks exactly like a numerical regression. `FRAME_BUDGET_MS` is
-  700 because the watchdog kills the GL context between 1.0 and 1.2 s/frame;
-  deep views are cheap (repelling reference, early bail), attracting-reference
-  views are not, so an attracting reference caps the iteration count up front.
-  `FLAG_VSYNC_HINT` is load-bearing, not cosmetic: without it the D3D12 swap
-  returns before the GPU is done, `GetFrameTime()` reports only `SetTargetFPS`
-  pacing, and the frame-cost governor is blind by construction. Open defects and
-  traps in `NOTES.md` and `TODO.md`.
 
 - `cell.c` / `cell` — fullscreen Conway's Life editor with a sparse, unbounded
   grid (only non-empty cells stored; max ~2^53 coordinate range via double
@@ -173,7 +142,7 @@ audio, networking, and fullscreen behavior. Keep changes small.
 Binaries are compiled by statically linking against the sibling raylib clone at
 `~/raylib` (`src/raylib.h`, `src/libraylib.a`). Compiled binaries
 (`audio_test`, `fullscreen_test`, `net_test`, `mandelbrot`, `mandelbrot_ref`,
-`pert`, `pert_ref`, `*.o`) are gitignored; commit source only. `net_test` also compiles `hide_cursor_x11.c`
+`*.o`) are gitignored; commit source only. `net_test` also compiles `hide_cursor_x11.c`
 (see `NOTES.md`).
 
 ## Echo server (for `main.c`)
@@ -254,6 +223,9 @@ everything here; the user pushes out of context afterward — **never push**.
 ## Sibling repos
 
 - `~/raylib` — upstream `raysan5/raylib` clone, not personal, do not push.
+- `~/mandelbrot_pert` — public; perturbation-theory deep zoom (`pert.c`), split
+  out of this repo because it was polluting the context here. Membership-exact to
+  span 1e-50. Do not modify `mandelbrot.c` from there.
 - `~/factorio-rcon-bot` — public; Jimbo Factorio bot with its own AGENTS.md.
 - `~/system-administration` — private; host-level notes, `agent-guidance/COMMON.md`
   (source of personal working agreements), and the `push` script at `bin/push`.

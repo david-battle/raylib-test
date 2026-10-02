@@ -512,9 +512,10 @@ resolution. Fix the wording when touching that constant.
 
 A second fullscreen instance contends for the GPU. Shots then segfault or dump
 a partially rendered frame, which reads exactly like a numerical regression:
-observed as 1e-20 banding drifting 8.17 -> 15.98 and 1e-50 segfaulting, both
-purely from running `pert_verify.sh` next to a live `./pert`. `pkill -x pert`
-first. The warning is now at the top of `pert_verify.sh`.
+observed on the perturbation renderer as 1e-20 banding drifting 8.17 -> 15.98
+and 1e-50 segfaulting, both purely from running its `pert_verify.sh` next to a
+live `./pert`. It bites `mandelbrot_harness.py` the same way. Kill the viewer
+first (`pkill -x pert`, `pkill -x mandelbrot`).
 
 ### Frame-cost governor (replaces `PRECISE_ITER`)
 
@@ -719,45 +720,3 @@ first. The warning is now at the top of `pert_verify.sh`.
   dump is top-down while the reference is bottom-up — the checker does the one
   flip. Writing `sw*sh*3` bytes out of that buffer silently produces garbage
   that still has a plausible membership mask if the crop has no interior.
-
-## Perturbation renderer (`pert.c`) — what verification actually cost
-
-Four things here cost hours and are all traps in any GL/oracle diff work. Read
-them before re-investigating a "mismatch" in this repo.
-
-- **The HUD was the bug, twice.** `mandelbrot_check.py`'s `mem` number is
-  derived from the *colour* image, not from counts, so anything drawn on top of
-  the frame counts as a render error. `--shot` was drawing four HUD lines whose
-  glyphs landed inside the comparison crop: a clean 29-row band of
-  "membership errors" (916 of 14400, all one-sided, clustered exactly where the
-  text sits), which looks precisely like a numerical failure band and sent me
-  hunting for a shader bug that did not exist. `--shot` now suppresses the HUD.
-  *When a disagreement is spatially banded and one-sided, suspect an overlay
-  before suspecting arithmetic.*
-- **Read `mem` off the count encoder, not the colour.** `--shot ... 4` renders
-  path 3's arithmetic with the iteration count in R/G and the interior flag in
-  B. With that, every one of 108521 comparable pixels matched the oracle's
-  count exactly and membership was 0/108521 — the renderer had been correct the
-  whole time. The colour channel's per-iteration hue bands are why `mean|d|`
-  sits at 70-130 at depth even when the sets agree perfectly.
-- **Mesa's GLSL compiler constant-folds literal-only expressions in fp32**, even
-  in a `#version 400 core` shader on a context that advertises
-  `GL_ARB_gpu_shader_fp64`. Probed directly: `0.1 + 0.2 == 0.3` and
-  `2.0 + 2^-30 == 2.0` both evaluate *true* (fp32 answers), while
-  `double`-typed runtime work (`double w; for (10) w += 0.1; w != 1.0`, and
-  `float h = 1.0; double(h) + double(2^-30) != 1.0`) is correct to fp64. So
-  runtime fp64 is real, and this is very likely the same folding that makes
-  mandelbrot.c's double-single `twoSum` degrade to fp32 there. Never write an
-  fp64 assertion out of literals: force the values through a `float` variable.
-- **raylib's `GetShaderLocation` ids are not GL uniform locations.** Passing them
-  to `glGetUniform*` reads unrelated locations and returns plausible garbage —
-  it cost a while because the numbers looked like real uniform values. Use
-  `rlGetLocationId(shader.id, name)` if a GL location is genuinely needed.
-
-And one confirmation worth keeping: the GPU's reference table is exact. A
-fixed-delta run (delta as a uniform, so every fragment iterates the same orbit)
-returned the same escape iteration as the `__float128` oracle to the last count,
-which pins the table layout, the hi/lo float round-trip, and the fp64
-recurrence all at once — and exonerated `delta`, the pixel offset, the uniforms
-and the rasterizer in one shot. Isolating with a fixed delta is the move when a
-per-pixel loop disagrees with an oracle.
