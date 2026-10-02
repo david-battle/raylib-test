@@ -77,10 +77,14 @@ audio, networking, and fullscreen behavior. Keep changes small.
   1e-12 span at ~130-230 ms/frame. Do NOT "optimise" that path back into
   double-single hi/lo float pairs — this GPU's GLSL compiler folds the
   `twoSum` error-free transform away, so DS silently degrades to float32.
-  Don't raise `PRECISE_ITER` past ~20000 either: interior pixels pay the whole
-  cap, and a deep fp64 view with an interior-heavy frame hits the ~2 s GPU
-  watchdog, loses the context, and goes permanently black (looks like a shader
-  bug; see `NOTES.md`).
+  There is no iteration cap: `AutoIterations` asks for as much as the zoom trend
+  suggests and `StepGovernor` decides what the frame can afford from measured
+  frame time, because a constant can't bound a cost that depends on the view (a
+  99%-interior fp64 view costs 1.1 s where a filament view costs 135 ms at the
+  same count) and overrunning the ~2 s GPU watchdog loses the context and goes
+  permanently black. Don't reintroduce a static cap, and don't slow a deep view
+  down by lowering `ITER_SLOPE` — the knobs are `ITER_SLOPE` (detail asked for)
+  and `FRAME_BUDGET_MS` (latency spent). See `NOTES.md`.
   raylib has no double uniform API: the file includes `external/glad.h` and
   sets the `dvec2` uniforms with `glUniform2d`. The orbit is exact (double and
   `__float128` agree bit-for-bit); what limits deep views is the last

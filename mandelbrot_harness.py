@@ -15,6 +15,8 @@ dump, quit" by string surgery on a *copy* of the source, and compile that.
     iterations 0 keeps the app's AutoIterations; else overrides the cap
     frames: how many frames to render before dumping (default 12; the view has
         to have finished gliding, and it is timed from frame 3)
+    iterations: 0 lets the app's frame-cost governor choose (default); anything
+        else pins the count and bypasses the governor, for worst-case timing
 
 The framebuffer it gets is whatever WSLg hands the (non-fullscreen) window,
 which is not the app's fullscreen monitor - pass the real size to
@@ -60,8 +62,11 @@ sub('    while (!WindowShouldClose()) {', '''    int fc = 0;
         fc++;
         if (fc > 1) { double dt_ = GetTime() - tPrev; if (dt_ > worstFrame) worstFrame = dt_; }
         tPrev = GetTime();''')
-sub('        int iter = (int)(AutoIterations(span, homeSpan, precise)*iterScale + 0.5);',
-    '        int iter = iterFix ? iterFix : (int)(AutoIterations(span, homeSpan, precise)*iterScale + 0.5);')
+# iterFix pins the count the frame gets, bypassing the governor, so worst-case
+# frame times can be reproduced on demand. 0 leaves the governor in charge,
+# which is what you want when testing what the app would actually do.
+sub('        int iter = want;\n        StepGovernor(1000.0*(double)GetFrameTime(), want, &iter);',
+    '        int iter = iterFix ? iterFix : want;\n        if (!iterFix) StepGovernor(1000.0*(double)GetFrameTime(), want, &iter);')
 sub('''        EndDrawing();
     }
 

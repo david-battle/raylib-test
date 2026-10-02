@@ -128,9 +128,17 @@ static const double BOX_Y0 = -1.35, BOX_Y1 = 1.35;
 #define GLIDE       20.0f    // exponential approach rate for zoom/pan, per second
 #define ITER_STEP   1.25     // manual iteration nudge per +/- press (multiplier)
 #define PRECISE_ZOOM 2e4     // auto-switch to the fp64 path past this
-#define PRECISE_ITER 40000  // iteration cap in fp64 mode. The cap is nearly
-                            // free: frame cost tracks the average escape count,
-                            // not maxIter, so only pixels that never escape pay.
+#define ITER_SLOPE  900.0    // iterations to add per doubling of zoom
+#define FRAME_BUDGET_MS 600.0  // governor target; ~3x headroom to the ~2 s
+                               // watchdog. Measured: 99%-interior fp64 view at
+                               // 12682 iterations = 1.1 s at 1680x1050, so the
+                               // budget is what keeps deep views off the cliff.
+#define ITER_START  4000      // first frame's count; climbs to the target in
+                               // well under a second, and avoids an unaffordable
+                               // opening frame
+#define ITER_HARD_MAX 400000  // runaway guard on auto/+ only. Unreachable in
+                               // practice: MIN_SPAN bounds zoom, so auto tops out
+                               // near 30000 and the governor trims before this.
 
 // OS key auto-repeat delivers extra KEY events while a key stays down, so
 // IsKeyPressed() can fire several times per physical press. Latch on the rising
@@ -142,19 +150,48 @@ static bool KeyStroke(int *held, int down)
     return rising;
 }
 
-// How many steps to allow. Empirically the count needed grows far faster than
-// the zoom itself (steep in log2(zoom)), so this is a guess that errs low: past
-// the cap the unsolved pixels just read as interior, i.e. black blobs. Use +/-
-// when the picture looks over-filled. The cap differs per path because the
-// fp64 path costs ~5x per iteration.
-static int AutoIterations(double span, double homeSpan, int precise)
+// How many steps to ask for. Empirically the count needed grows far faster than
+// the zoom itself (steep in log2(zoom)), and past what a pixel gets it just
+// reads as interior, i.e. a black blob -- so under-asking costs visible detail.
+// There is deliberately no ceiling here: frame cost is governed by measurement
+// in StepGovernor() instead, which trims only what the machine cannot afford.
+// That also means asking high is nearly free: pixels that escape early cost the
+// same at 25000 iterations as at 5000.
+static int AutoIterations(double span, double homeSpan)
 {
     double zoom = homeSpan/span;
-    int n = 150 + (int)(400.0*log2(zoom < 1.0 ? 1.0 : zoom));
-    int cap = precise ? PRECISE_ITER : 12000;
+    int n = 150 + (int)(ITER_SLOPE*log2(zoom < 1.0 ? 1.0 : zoom));
     if (n < 150) n = 150;
-    if (n > cap) n = cap;
+    if (n > ITER_HARD_MAX) n = ITER_HARD_MAX;
     return n;
+}
+
+// Hold the frame inside a budget by trimming the iteration count, rather than
+// capping it by a constant that some views exceed. This matters because the cost
+// of one iteration is not a property of the shader: pixels that escape early are
+// nearly free, and pixels deep in the interior pay the whole cap. A view that is
+// 99% interior at 12000 iterations costs ~1.1 s on this GPU while a view full of
+// filaments costs ~135 ms at the same count, so no static cap can keep both
+// safe -- and overrunning the ~2 s watchdog loses the GL context and leaves a
+// permanently black window, which looks exactly like a shader bug.
+//
+// So: `want` is what auto/+/- ask for, `iter` is what the frame can afford.
+// Dropping below `want` (a `-` press, or zooming out) takes effect at once;
+// climbing back up is gradual, which is also what keeps a zoom step from
+// producing one unaffordable frame before the governor can react.
+static void StepGovernor(double frameMs, int want, int *iter)
+{
+    static double ms = 0.0;
+    static int cur = 0;
+    if (ms <= 0.0) ms = frameMs;
+    else ms += 0.25*(frameMs - ms);
+    if (cur <= 0) cur = ITER_START;
+    if (cur > want) cur = want;
+    else if (ms > FRAME_BUDGET_MS) cur = (int)(cur*0.75);
+    else if (ms < FRAME_BUDGET_MS*0.5) cur += cur/16 + 1;
+    if (cur > want) cur = want;
+    if (cur < 50) cur = 50;
+    *iter = cur;
 }
 
 // Pick the external (non-built-in laptop) monitor, as ico.c/cell.c do.
@@ -236,8 +273,10 @@ int main(void)
         if (KeyStroke(&heldHud, IsKeyDown(KEY_F1))) showHud = !showHud;
         if (KeyStroke(&heldAuto, IsKeyDown(KEY_A))) iterScale = 1.0;
         if (KeyStroke(&heldPrec, IsKeyDown(KEY_P))) precMode = (precMode + 1) % 3;
-        if (KeyStroke(&heldPlus, IsKeyDown(KEY_EQUAL) || IsKeyDown(KEY_KP_ADD)))
+        if (KeyStroke(&heldPlus, IsKeyDown(KEY_EQUAL) || IsKeyDown(KEY_KP_ADD))) {
             iterScale *= ITER_STEP;
+            if (iterScale > 64.0) iterScale = 64.0;
+        }
         if (KeyStroke(&heldMinus, IsKeyDown(KEY_MINUS) || IsKeyDown(KEY_KP_SUBTRACT)))
             iterScale /= ITER_STEP;
 
@@ -280,9 +319,11 @@ int main(void)
 
         double zoom = homeSpan/span;
         int precise = (precMode == 1) ? 1 : (precMode == 2) ? 0 : (zoom > PRECISE_ZOOM);
-        int iter = (int)(AutoIterations(span, homeSpan, precise)*iterScale + 0.5);
-        if (iter < 50) iter = 50;
-        if (iter > 4000000) iter = 4000000;
+        int want = (int)(AutoIterations(span, homeSpan)*iterScale + 0.5);
+        if (want < 50) want = 50;
+        if (want > 4000000) want = 4000000;
+        int iter = want;
+        StepGovernor(1000.0*(double)GetFrameTime(), want, &iter);
 
         BeginDrawing();
             ClearBackground(BLACK);
@@ -315,7 +356,8 @@ int main(void)
                 snprintf(l1, sizeof l1, "span    %.3e   prec %s", span,
                          precMode == 1 ? "double (forced)" : precMode == 2 ? "float (forced)" :
                          precise ? "double (auto)" : "float (auto)");
-                if (iterScale == 1.0) snprintf(l2, sizeof l2, "iter    %d auto", iter);
+                if (iter < want) snprintf(l2, sizeof l2, "iter    %d budget (want %d)", iter, want);
+                else if (iterScale == 1.0) snprintf(l2, sizeof l2, "iter    %d auto", iter);
                 else snprintf(l2, sizeof l2, "iter    %d auto x%.2f", iter, iterScale);
                 snprintf(l3, sizeof l3, "%d fps   |   wheel zoom  drag pan  +/- iter  A auto"
                                         "  P precision  SPACE reset  F1 hud  ESC quit", GetFPS());

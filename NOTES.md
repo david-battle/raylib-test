@@ -391,23 +391,19 @@ Rules that keep it working:
   fp64 is membership-exact through 1e-12; only the colour error grows (float
   smooth-colour maths plus fp64 rounding). Auto crossover `PRECISE_ZOOM 2e4` sits
   where float32 starts to break.
-- **The fp64 iteration cap is nearly free *when pixels escape*** — frame cost
-  tracks the *average* escape count, not `maxIter`: at span 1e-8, 8000
-  iterations and 1e6 iterations both cost ~135 ms/frame, because only pixels
-  that never escape pay for the cap. On that evidence `PRECISE_ITER` went
-  4000 -> 40000 and `AutoIterations` is no longer truncated (it wants 7427 at
-  1e-5, 11414 at 1e-8, 16729 at 1e-12). Cost: ~26-30 ms/frame float32 shallow,
-  ~130-230 ms/frame fp64 deep at 1680x1050.
-  **But "nearly free" only holds for escaping views — see the watchdog below,
-  which is what actually limits `PRECISE_ITER` on this machine.**
+- **Frame cost is not a property of the iteration count.** At span 1e-8, 8000
+  iterations and 1e6 iterations both cost ~135 ms/frame, because pixels that
+  escape early pay nothing and only pixels stuck in the interior pay the whole
+  cap. Under-asking therefore costs visible detail for free, and over-asking
+  costs a multiple, but the multiple depends on the *view*: a 99%-interior view
+  at 12682 iterations cost 1.1 s where a filament view costs 135 ms at the same
+  count. **No static cap can keep both safe** — see the governor below.
 - **A deep fp64 view can outrun the GPU watchdog and go permanently black.**
-  Found with `mandelbrot_harness.py`, not by using the app. Interior pixels pay
-  the whole cap, so an interior-heavy view at `PRECISE_ITER` 40000 costs
-  seconds per frame; the context resets and every later frame renders nothing.
-  Symptom is nasty because it looks like a shader bug: frame 2 takes 2.35 s,
-  frames 3..N then take ~10 ms each, and the dump is 100% black while still
-  logging `prec 1 iter 40000`. Measured at span 1e-6 (this centre renders ~73%
-  interior at 5000 iterations), fp64, 1680x1050:
+  Found with `mandelbrot_harness.py`, not by using the app. The context resets
+  and every later frame renders nothing. Symptom is nasty because it looks like
+  a shader bug: frame 2 takes 2.35 s, frames 3..N then take ~10 ms each, and the
+  dump is 100% black while still logging `prec 1 iter 40000`. Measured at span
+  1e-6 (this centre renders ~73% interior at 5000 iterations), fp64, 1680x1050:
 
   | iteration cap | slowest frame | image |
   |---|---|---|
@@ -415,15 +411,49 @@ Rules that keep it working:
   | 12000 | 0.84 s | renders |
   | 20000 | 1.37 s | renders |
   | 30000 | ~2.2 s | black, context gone |
-  | 40000 (`PRECISE_ITER`) | 2.35 s | black, context gone |
+  | 40000 | 2.35 s | black, context gone |
 
-  So ~20000 is the ceiling here, with ~2 s as the watchdog. Two consequences:
-  don't raise `PRECISE_ITER`, and treat a black deep view as a suspected
-  watchdog reset before suspecting the shader. The harness now measures its
-  slowest frame and exits 3 with a warning above 1.5 s, so a lost context can't
-  be recorded as a rendering result. (A genuinely all-interior view is still
-  legitimately black — that is what the iteration cap *means*; the frame time is
-  what distinguishes the two.)
+  So the watchdog is ~2 s and the old `PRECISE_ITER` 40000 sat past it. Treat a
+  black deep view as a suspected watchdog reset before suspecting the shader.
+  The harness measures its slowest frame and exits 3 above 1.5 s, so a lost
+  context can't be recorded as a rendering result. (A genuinely all-interior
+  view is still legitimately black — that is what the iteration count *means*;
+  the frame time is what distinguishes the two.)
+
+### Frame-cost governor (replaces `PRECISE_ITER`)
+
+- `PRECISE_ITER` was the wrong shape twice over. First, it was never reached by
+  zooming: `AutoIterations` wants 6038 at span 1e-4 and tops out at 12682 at
+  `MIN_SPAN`, and only `+` presses could push past it — so the "raise it to
+  40000" decision (made when the cap looked free) bought nothing except a
+  ceiling that led straight into the watchdog. Second, and the real problem, no
+  constant can bound a cost that depends on the view.
+- Now there is no cap at all. `AutoIterations` is an uncapped trend
+  (`150 + 900*log2(zoom)`, max ~30000 at `MIN_SPAN`) that *asks* for a lot, and
+  `StepGovernor` decides what the frame can actually afford from the measured
+  frame time: over `FRAME_BUDGET_MS` 600 it cuts 25%, under half of it climbs
+  ~6%/frame, and a `want` below the current count (a `-` press, zooming out) is
+  taken at once. Climbing gradually is what stops a zoom step from producing one
+  unaffordable frame before the governor can react.
+- Measured, fp64, 1680x1050, boundary centre, 60 frames:
+
+  | view | iterations | frame |
+  |---|---|---|
+  | span 1e-4 | 13398 | 39 ms |
+  | span 1e-6 (73% interior) | 4251 (budget-limited) | 307 ms |
+  | span 1e-8 | 25357 | 111 ms |
+  | span 1e-10 | 31337 | 137 ms |
+  | interior centre 0,0 @ 1e-9 | 4251 | 378 ms |
+
+  No watchdog hit anywhere. The filament views that carry the detail now get
+  25-31k iterations — 2.2-2.7x what the old formula asked for — while the
+  interior-heavy ones trim themselves to what fits. Membership against the
+  `__float128` oracle stays exact (0/120000 at 1e-8 and 1e-10).
+- Consequences for future edits: don't reintroduce a static iteration cap, and
+  don't "fix" a slow deep view by lowering `ITER_SLOPE` — that trades real
+  detail in the cheap views for smoothness in the expensive ones. The two knobs
+  are `ITER_SLOPE` (how much detail to ask for) and `FRAME_BUDGET_MS` (how much
+  latency to spend; raising it buys detail at the cost of frame rate).
 - **Screenshot/reference comparisons must flip rows.** `TakeScreenshot` output
   is top-down and the view maps growing `im` upward, so reference row `Y0+j` is
   PNG row `H-1-(Y0+j)`; the crop is `[H-Y0-CH : H-Y0]`, then reversed. The trap:
