@@ -85,11 +85,18 @@ audio, networking, and fullscreen behavior. Keep changes small.
   permanently black. Don't reintroduce a static cap, and don't slow a deep view
   down by lowering `ITER_SLOPE` — the knobs are `ITER_SLOPE` (detail asked for)
   and `FRAME_BUDGET_MS` (latency spent). See `NOTES.md`.
+  HUD text uses `DrawTextOutlined` (8 black offsets, then the fill) rather than a
+  backing bar, which the user dislikes; the outline width scales with glyph size.
   raylib has no double uniform API: the file includes `external/glad.h` and
   sets the `dvec2` uniforms with `glUniform2d`. The orbit is exact (double and
   `__float128` agree bit-for-bit); what limits deep views is the last
   coordinate add rounding to ulp(0.74), ~7e-4 px at span 1e-10. Don't go
   hunting for more precision. Measurements in `NOTES.md`.
+  The set's left tip is exactly c=-2 (real axis runs -2 to 1/4, top near
+  im 1.10), so `BOX_X0 = -2.20` frames it. Membership must test escape as
+  STRICTLY `m > 4`: c=-2's orbit sits at |z|=2 exactly forever, so a "reject
+  if not m < 4" guard loses the left tip. Sanity-check any such test against
+  c=-2 (inside) and -2.000001 / 0.2500001 (outside).
   Builds with the same gcc line as `ico`; run as `./mandelbrot`.
 - `mandelbrot_ref.c` / `mandelbrot_harness.py` / `mandelbrot_check.py` —
   verification trio for the shader, use before believing any change to it.

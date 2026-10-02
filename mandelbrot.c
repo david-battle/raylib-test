@@ -140,6 +140,22 @@ static const double BOX_Y0 = -1.35, BOX_Y1 = 1.35;
                                // practice: MIN_SPAN bounds zoom, so auto tops out
                                // near 30000 and the governor trims before this.
 
+// Text over a fractal is unreadable whenever the fractal happens to be as light
+// as the glyphs, so stamp the string at the 8 neighbouring offsets in black and
+// then draw the fill on top. A backing bar would work too, but it hides the
+// image underneath and reads as a sticker; this keeps the fractal visible
+// through the gaps between and inside glyphs. The offset tracks the glyph size,
+// otherwise a 1px outline on 22px text reads as a smudge.
+static void DrawTextOutlined(const char *text, int x, int y, int size, Color fill)
+{
+    int o = (size >= 20) ? 2 : 1;
+    for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++) {
+        if (dx == 0 && dy == 0) continue;
+        DrawText(text, x + dx*o, y + dy*o, size, BLACK);
+    }
+    DrawText(text, x, y, size, fill);
+}
+
 // OS key auto-repeat delivers extra KEY events while a key stays down, so
 // IsKeyPressed() can fire several times per physical press. Latch on the rising
 // edge of IsKeyDown() instead: one press, one action.
@@ -361,10 +377,10 @@ int main(void)
                 else snprintf(l2, sizeof l2, "iter    %d auto x%.2f", iter, iterScale);
                 snprintf(l3, sizeof l3, "%d fps   |   wheel zoom  drag pan  +/- iter  A auto"
                                         "  P precision  SPACE reset  F1 hud  ESC quit", GetFPS());
-                DrawText(l0, 24, 24, 22, (Color){ 235, 235, 235, 255 });
-                DrawText(l1, 24, 52, 22, (Color){ 235, 235, 235, 255 });
-                DrawText(l2, 24, 80, 22, (Color){ 235, 235, 235, 255 });
-                DrawText(l3, 24, sh - 34, 18, (Color){ 150, 150, 150, 255 });
+                DrawTextOutlined(l0, 24, 24, 22, (Color){ 235, 235, 235, 255 });
+                DrawTextOutlined(l1, 24, 52, 22, (Color){ 235, 235, 235, 255 });
+                DrawTextOutlined(l2, 24, 80, 22, (Color){ 235, 235, 235, 255 });
+                DrawTextOutlined(l3, 24, sh - 34, 18, (Color){ 200, 200, 200, 255 });
             }
         EndDrawing();
     }

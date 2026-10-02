@@ -522,6 +522,43 @@ Rules that keep it working:
   that this GLSL compiler folds away. Adding `dCenter`'s residual to the orbit
   is the wrong instinct; the residual is not the error, the final add is.
 
+### Where the set ends (and a membership-test trap)
+
+- The set's exact left tip is **c = -2**, where the cardioid tail meets the
+  period-2 bulb; the real axis runs exactly `-2` to `1/4` (the cusp), and the
+  top of the set is near `im = 1.10`. `BOX_X0 = -2.20` therefore frames the
+  left tip with room to spare, so the home view cuts nothing off.
+- Testing membership with the usual `|z|^2 > 4` bailout silently loses `c=-2`
+  itself: that orbit is `0 -> -2 -> 2 -> 2 -> ...`, so `|z|` sits at exactly 2
+  forever and never exceeds the threshold. A guard written as "escape if
+  `!(m < 4)`" (meant to catch NaN) therefore also rejects `m == 4` and throws
+  the left tip out — a grid scan built that way reports an extent that misses
+  the tip and invents points outside the `|c| <= 2` disc. Escape must be strictly
+  `m > 4`, with NaN/inf as a separate case. Two scans were wasted on this before
+  the analytic bounds (`-2 .. 1/4`) disagreed with the measurement and gave it
+  away. Sanity-check any membership test against `c = -2` (inside), `-2.000001`
+  and `0.2500001` (both outside).
+- Both the shader and `mandelbrot_ref.c` classify with `m > 4`, so `c=-2` is
+  correctly interior and renders black. Keep it that way if either is touched.
+
+### Legibility notes from using it
+
+- Light HUD text over the fractal is unreadable wherever the fractal is as
+  bright as the glyphs. `DrawTextOutlined` stamps each string at the 8
+  neighbouring offsets in black, then draws the fill on top; the offset scales
+  with glyph size (2px at 22pt, 1px at 18pt) so a 1px outline doesn't smear the
+  small help line. No backing bar — the image stays visible between glyphs.
+- Colour "runs together" while exploring, because the band term
+  `smoothstep(400,1500,nu)` is ~0 for shallow views (nu in the hundreds), so
+  the hue is one continuous ramp there. The bands exist to separate neighbouring
+  escape counts at depth; if shallow legibility is wanted more than the ramp,
+  lowering the ramp floor (e.g. `smoothstep(120,600)`) is the knob, at the cost
+  of the deep-view stability measured above.
+- Zooming on the boundary in central regions gives per-pixel uncorrelated
+  colour. Expected, not a shader bug: the set's boundary is where the orbit is
+  most sensitive to its parameter, so neighbouring pixels flip escape counts.
+  It is the same gradient that makes the boundary look sharp.
+
 ## Verifying the shader (committed tools)
 
 - `mandelbrot_ref.c` — CPU oracle, same orbit and colouring as the shader, in
