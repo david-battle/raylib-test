@@ -112,6 +112,25 @@ audio, networking, and fullscreen behavior. Keep changes small.
   number, on deep views: see `NOTES.md` for why, and for the RGBA/top-down vs
   RGB/bottom-up row trap.
 
+- `pert.c` / `pert_ref.c` / `pert_verify.sh` — perturbation Mandelbrot, the deep
+  zoom path. `pert.c` renders `c = c0 + delta`, `z_n = Z_n + w_n` with `Z`
+  shared across the frame as a `1024x1024` RGBA32F `sampler2D` (one
+  `texelFetch` per iteration, NEAREST) and `delta` formed from the exact
+  integer pixel offset, never `uv-0.5`. `mandelbrot.c` is deliberately not
+  touched. fp64 path is membership-exact against the `__float128` oracle from
+  span 1e-6 to **1e-50**; fp32 survives to ~1e-33 and then underflows. Build
+  with the same gcc line as `ico`, run as `./pert`. Two things not to undo: the
+  reference must be a point whose orbit *survives* (an escaping one silently
+  truncates every pixel's loop to the same count), and `--shot` must not draw
+  the HUD, because `mandelbrot_check.py` reads membership off the colour image
+  and glyphs inside the crop read as render errors — that cost hours and looks
+  exactly like a numerical band failure. Verify with
+  `CROP=120 SPANS="1e-6 1e-20" ./pert_verify.sh 480 270`; read `mem`, not
+  `mean|d|`, past ~1e-4. `FRAME_BUDGET_MS` is 700 because the watchdog kills the
+  GL context silently between 1.0 and 1.2 s/frame at 1920x1080 fp60; deep views
+  are cheap (repelling reference, early bail), attracting-reference views are
+  not. Traps in `NOTES.md`.
+
 - `cell.c` / `cell` — fullscreen Conway's Life editor with a sparse, unbounded
   grid (only non-empty cells stored; max ~2^53 coordinate range via double
   camera in `main.c`-style fullscreen setup). 3-color states (red/green/blue)
@@ -140,7 +159,7 @@ audio, networking, and fullscreen behavior. Keep changes small.
 Binaries are compiled by statically linking against the sibling raylib clone at
 `~/raylib` (`src/raylib.h`, `src/libraylib.a`). Compiled binaries
 (`audio_test`, `fullscreen_test`, `net_test`, `mandelbrot`, `mandelbrot_ref`,
-`*.o`) are gitignored; commit source only. `net_test` also compiles `hide_cursor_x11.c`
+`pert`, `pert_ref`, `*.o`) are gitignored; commit source only. `net_test` also compiles `hide_cursor_x11.c`
 (see `NOTES.md`).
 
 ## Echo server (for `main.c`)
