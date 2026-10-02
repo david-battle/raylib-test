@@ -420,6 +420,102 @@ Rules that keep it working:
   view is still legitimately black — that is what the iteration count *means*;
   the frame time is what distinguishes the two.)
 
+### The frame time was never measuring the frame
+
+- Symptom: the viewer stalled at minibrots, repeatedly, and every fix aimed at
+  the governor did nothing. The state log settled it -- `iter 36366/36366 ...
+  frame 17 ms` at 1680x1050. 36366 fp64 iterations over 1.76M pixels is ~4.4e12
+  pixel-iterations/second, and *every* line read 17 ms, including one that had
+  really taken 747 ms. `iter` tracked `want` 1:1 throughout: nothing was ever
+  holding it back.
+- Cause: without vsync the WSLg/D3D12 swap returns immediately, so the CPU never
+  waits for the GPU and `GetFrameTime()` reports only `SetTargetFPS` pacing. The
+  submission queue runs away silently -- process idle at ~22% of a core in
+  `hrtimer_nanosleep` while the GPU fell further behind, which is why it looked
+  like a hang and not like slow frames.
+- Fix: `SetConfigFlags(FLAG_VSYNC_HINT)`. Not for tear-free output -- so that the
+  swap cannot outrun the GPU and the frame time is real. Everything the governor
+  does depends on this; with it off the governor is blind by construction.
+- Do **not** try to force a sync with `glFinish()` here. `external/glad.h` is
+  included for `glUniform2d` but `gladLoadGLLoader` is never called, so glad's
+  `glFinish` is an uninitialised pointer and the call jumps to 0 (ASan:
+  `SEGV, pc 0x0`). `glUniform2d` survives only because rlgl happens to load it.
+
+### Chasing the interactive stalls: four separate bugs, one masked the next
+
+The viewer kept stalling at minibrots, and each fix exposed the next. Recorded
+because the sequence is the point: three of these looked like the same bug.
+
+1. **The frame time was measuring nothing** (see the section below). This was
+   the root cause; the governor was blind and `iter` tracked `want` 1:1.
+2. **Governor ping-pong.** With honest timing, a proportional climb capped at
+   1.6x overshot the budget in one step, the proportional shrink gave back what
+   the climb added, and the detail level oscillated every other frame. Fixed
+   with a 1.15x step cap plus a 30-frame hold after any shrink. Keep the climb
+   gentler than the shrink: overshooting is visible, undershooting only costs a
+   few frames.
+3. **Short-reference churn.** At depth, *no* point within `REF_SEARCH_PX` may
+   survive the requested iteration count -- the reference has to be deep inside
+   the set while the visible frame is mostly filaments. `RefPrepare` then falls
+   back to a short reference, but nothing stopped it retrying: next frame
+   `RefExtend(need)` was re-run with the full `need`, the short reference
+   escaped, and the ring search picked a *different* pixel. So `refMax` and the
+   attraction verdict flipped every frame, `iter` bounced between them (+-7%),
+   and the whole table was re-uploaded every frame. That was a flicker on a
+   completely static view -- no zoom, no input. `refShortFor` latches a short
+   reference once found; the shrinking keep radius re-searches when the view
+   actually moves.
+   - The `change:` trace line (logged only when `iter`, `path` or `refMax`
+     actually changes) is what found this. With a static view those three are
+     the *only* things that can vary, so "log on change" answers "why is it
+     flickering" without a flood. Keep it.
+4. **Attraction classifier blind spot** (still open, see TODO): it classifies
+   the *reference orbit*, but cost is driven by the neighbourhood. A repelling
+   reference a pixel away from a minibrot sits in a screen that is nearly all
+   interior.
+
+### Where direct fp64 actually stops working
+
+Measured against the `__float128` oracle at c=-1.7497, banding error
+(`mean|d|`), because membership is vacuous there (see below):
+
+| span | pixel size in c | direct fp64 banding |
+|---|---|---|
+| 1e-10 | 1.3e-13 | 0.20 |
+| 1e-12 | 1.3e-15 | 0.18 |
+| 1e-13 | 1.3e-16 | 0.27 |
+| 1e-14 | 1.3e-17 | 0.43 |
+| 1e-15 | 1.3e-18 | 1.77 |
+| 1e-16 | 1.3e-19 | 13.23 |
+
+fp64 resolves ~2e-16 near |c|=1.75, so one pixel stays comfortably representable
+until the span reaches ~1e-13, where it collapses. Consistent with the 1e-13
+wall already noted for `mandelbrot.c`.
+
+**Membership at c=-1.7497 is vacuous for spans 1e-8 and deeper.** Every crop
+tested, at seven offsets across the frame, reports `interior 0/14400`: the whole
+render is exterior because the set there is a filament thinner than a pixel. So
+`mem 0/14400` from *two different paths agreeing* proves nothing at those spans
+-- it just means both found nothing. This re-confirms the trap already recorded
+under "Traps found while verifying" in `TODO.md`. When membership is vacuous,
+banding error is the only usable signal.
+
+### The render target is 1680x1050, not 1920x1080
+
+raylib logs `Using monitor 1: rdp-2` at 1920x1080, but `GetRenderWidth/Height`
+report 1680x1050, so `WorstCaseIterations` scales to 4114 rather than 3500. It
+scales by actual pixel count, which is the right behaviour -- but every "1080p"
+number in the notes and in the calibration comment describes the wrong
+resolution. Fix the wording when touching that constant.
+
+### Never verify with the interactive viewer running
+
+A second fullscreen instance contends for the GPU. Shots then segfault or dump
+a partially rendered frame, which reads exactly like a numerical regression:
+observed as 1e-20 banding drifting 8.17 -> 15.98 and 1e-50 segfaulting, both
+purely from running `pert_verify.sh` next to a live `./pert`. `pkill -x pert`
+first. The warning is now at the top of `pert_verify.sh`.
+
 ### Frame-cost governor (replaces `PRECISE_ITER`)
 
 - `PRECISE_ITER` was the wrong shape twice over. First, it was never reached by
@@ -431,10 +527,43 @@ Rules that keep it working:
 - Now there is no cap at all. `AutoIterations` is an uncapped trend
   (`150 + 900*log2(zoom)`, max ~30000 at `MIN_SPAN`) that *asks* for a lot, and
   `StepGovernor` decides what the frame can actually afford from the measured
-  frame time: over `FRAME_BUDGET_MS` 600 it cuts 25%, under half of it climbs
-  ~6%/frame, and a `want` below the current count (a `-` press, zooming out) is
-  taken at once. Climbing gradually is what stops a zoom step from producing one
-  unaffordable frame before the governor can react.
+  frame time. Both directions are proportional to the measured headroom, not
+  fixed percentages: over `FRAME_BUDGET_MS` (700) it scales the count by
+  `budget/measured`, under half of it scales by `(0.7*budget)/measured` with the
+  step capped at 1.6x, and a `want` below the current count (a `-` press,
+  zooming out) is taken at once. One warning per stall episode, with the counts
+  either side, goes to the log.
+- Why proportional rather than a fixed 25%/6%: a fixed shave needs ~15
+  consecutive overrunning frames to recover, and at an *attracting* reference
+  every pixel runs to the cap, so each of those frames is a multi-second one --
+  the app looks wedged for minutes while ESC still works, because the frames are
+  finishing, just far too slowly. On the climb side a fixed 6%/frame needs ~63
+  frames to get from a clamp back to a deep view's target
+  (`log(90000/2000)/log(1.0625)`), and the whole reference table is re-uploaded
+  on every one of those frames while its tail grows, so the picture visibly
+  sharpens over many seconds.
+- Reactive-only is not enough, because it reacts *after* the frame the watchdog
+  kills. `RefClassify` therefore predicts the case: averaging `log|2Z|` over the
+  tail of the reference orbit gives its growth rate, and when that is negative
+  the reference is attracting (a minibrot), so neighbouring orbits survive too
+  and *no* pixel bails early -- cost scales with the cap instead of with the
+  view. Then `WorstCaseIterations()` caps the count at what a full screen of
+  worst-case fp64 work affords (~3500 at 1920x1080, scaled by pixel count:
+  measured ~5000 iterations/second when every pixel runs to the cap, and 6000
+  already trips the watchdog). Slightly coarser filigree on minibrots; the
+  alternative is a black window and a dead device.
+  - Test the criterion on the **mean**, not `max|2Z| < 1`: an attracting *cycle*
+    only needs the product of `|2Z|` around the cycle below one, so single cycle
+    points may exceed it and the period-3 bulb centre reads as repelling.
+  - Floor the derivative, do not skip zero entries: at a superattracting point
+    `|2Z|` is exactly 0 and that is the strongest attraction there is. Skipping
+    them made the period-2 bulb centre (orbit `0, -1, 0, -1, ...`) read as
+    *repelling*, because only its `|2Z| = 2` terms were left. The floor bounds
+    how far one near-critical pass can drag the mean, which keeps deep repelling
+    references positive -- theirs measures ~+0.23 against the -0.01 threshold.
+  - Verified: seahorse valley at 1e-6 and 1e-30 both repelling (+0.2346,
+    +0.2379); period-2, period-3 bulb centres and cardioid interior all
+    attracting (-13.5, -8.5, -0.31).
 - Measured, fp64, 1680x1050, boundary centre, 60 frames:
 
   | view | iterations | frame |

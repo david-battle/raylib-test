@@ -167,3 +167,25 @@ get the fp64 path and stop at 1e-13 until Phase 5.
 - Deep test points need checking individually: the crop must actually contain
   interior pixels (at c=-1.7497 a 200x150 crop is 99.99% exterior — the set is
   a filament one pixel wide there), and a reference must exist nearby.
+
+## Open defects found while fixing the interactive stalls
+
+- **Path selection ignores capability.** `MODE_AUTO` picks perturbation whenever
+  *any* reference exists, including a fallback one that survives only ~500
+  iterations, and never compares against what direct fp64 could deliver. At
+  span ~1e-10 that throws away a full-quality render (direct fp64 bands at 0.20
+  there, see NOTES.md) in favour of a 500-iteration one, which is the "refuses
+  to render any more detail" wall. Choose by what each path can afford, not by
+  availability. This is the highest-value remaining fix.
+- **`RefFind` returns the first survivor, not the best.** It walks outward and
+  takes the first point whose orbit survives `need/f`, so it settles for a
+  marginal 500-iteration reference when a 30000-iteration one may sit a few
+  pixels further out. Preferring long-surviving candidates would raise the
+  depth ceiling everywhere, and unlike the fix above it also helps *below*
+  1e-13 where direct fp64 cannot help at all.
+- **The attraction classifier cannot see the neighbourhood.** It averages
+  `log|2Z|` over the reference orbit, but frame cost is set by how much of the
+  screen survives. A repelling reference beside a minibrot reports repelling
+  while the view is nearly all interior, so the cap disengages exactly when it
+  is needed. Needs a measure of screen-wide survival, not orbit growth.
+

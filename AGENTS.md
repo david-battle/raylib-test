@@ -126,10 +126,16 @@ audio, networking, and fullscreen behavior. Keep changes small.
   and glyphs inside the crop read as render errors — that cost hours and looks
   exactly like a numerical band failure. Verify with
   `CROP=120 SPANS="1e-6 1e-20" ./pert_verify.sh 480 270`; read `mem`, not
-  `mean|d|`, past ~1e-4. `FRAME_BUDGET_MS` is 700 because the watchdog kills the
-  GL context silently between 1.0 and 1.2 s/frame at 1920x1080 fp60; deep views
-  are cheap (repelling reference, early bail), attracting-reference views are
-  not. Traps in `NOTES.md`.
+  `mean|d|`, past ~1e-4. `pkill -x pert` before verifying: a second fullscreen
+  instance contends for the GPU and makes shots segfault or dump half-rendered
+  frames, which looks exactly like a numerical regression. `FRAME_BUDGET_MS` is
+  700 because the watchdog kills the GL context between 1.0 and 1.2 s/frame;
+  deep views are cheap (repelling reference, early bail), attracting-reference
+  views are not, so an attracting reference caps the iteration count up front.
+  `FLAG_VSYNC_HINT` is load-bearing, not cosmetic: without it the D3D12 swap
+  returns before the GPU is done, `GetFrameTime()` reports only `SetTargetFPS`
+  pacing, and the frame-cost governor is blind by construction. Open defects and
+  traps in `NOTES.md` and `TODO.md`.
 
 - `cell.c` / `cell` — fullscreen Conway's Life editor with a sparse, unbounded
   grid (only non-empty cells stored; max ~2^53 coordinate range via double

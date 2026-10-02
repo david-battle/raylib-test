@@ -228,11 +228,28 @@ static double refZr = 0.0, refZi = 0.0;   // orbit value at entry refFilled-1
 static int refFilled = 0;           // entries computed for (refX, refY)
 static int refValid = 0;
 
+// Entries already pushed to the GPU. The table only ever grows within one
+// reference (RefExtend appends), so "same length as last upload" means "same
+// bytes" -- except after RefAdopt, which installs different content at the same
+// length and resets this to 0.
+static int refUploaded = 0;
+static bool refAttracting = false;
+static bool capAnnounced = false;   // cap warning already emitted for this reference
+static int refShortFor = 0;       // entries in a settled short reference, 0 if full length
+static double refGrowth = 0.0;      // mean log|2Z| over the reference tail
+
 static void RefUpload(void)
 {
+    // Uploading unconditionally costs 14 MB per frame once the table reaches
+    // ~90k entries (which is where MIN_SPAN 1e-30 puts it), i.e. ~840 MB/s
+    // through WSLg's GL->D3D12 bridge. That is enough to stall the pipeline
+    // outright once the view settles, which reads as a freeze rather than as
+    // slowness -- ESC still works, so it looks like the app rather than the GPU.
+    if (refFilled == refUploaded) return;
     int rows = (refFilled + REF_TEX_W - 1)/REF_TEX_W;
     rlUpdateTexture(refTexId, 0, 0, REF_TEX_W, rows,
                     PIXELFORMAT_UNCOMPRESSED_R32G32B32A32, refData);
+    refUploaded = refFilled;
 }
 
 // Does c's own orbit stay bounded for n iterations? This is the criterion for a
@@ -275,14 +292,76 @@ static int RefExtend(int need)
     return 1;
 }
 
+static void RefClassify(void);
+
 // Adopt a fresh reference at (px, py): entry 0 is z_0 = 0, then fill the tail.
 static void RefAdopt(double px, double py, int need)
 {
     refX = px; refY = py;
     refZr = refZi = 0.0;
     refFilled = 1;
+    refUploaded = 0;           // different orbit, same length is not the same data
     refData[0] = refData[1] = refData[2] = refData[3] = 0.0f;
     refValid = RefExtend(need);
+    RefClassify();
+    capAnnounced = false;
+}
+
+// The derivative of the perturbation map at the reference is 2Z, so averaging
+// log|2Z| over the tail of the orbit says whether it is contracting. If it is,
+// neighbouring orbits survive too (a minibrot), and then *every* pixel in frame
+// runs to the iteration cap instead of bailing early. That is the one view
+// family whose cost scales with the cap rather than with the view, and it is
+// what loses the device to the GPU watchdog. A false positive is bounded:
+// WorstCaseIterations only binds once the budget asks for more than a full
+// screen of fp64 work can afford, which only happens when the view is deep.
+static void RefClassify(void)
+{
+    refAttracting = false;
+    refGrowth = 0.0;
+    if (refFilled <= 0) return;
+    // Testing max|2Z| < 1 would be wrong: an attracting *cycle* only needs the
+    // product of |2Z| around the cycle below one, so single cycle points may
+    // exceed it, and the period-3 bulb centre then reads as repelling. The
+    // Contraction is simply growth < 0, with no fudge margin: measured deep
+    // repelling references sit at +0.2346 and +0.2379, while a reference beside
+    // a minibrot measured -0.002, so 0 separates them by a wide margin. An
+    // earlier -0.01 threshold sat on the wrong side of that -0.002 case and let
+    // the cap disengage exactly where it was needed.
+    int n = refFilled < 8192 ? refFilled : 8192;
+    int off = refFilled - n;
+    double acc = 0.0;
+    int cnt = 0;
+    for (int k = 0; k < n; k++) {
+        float *e = refData + (size_t)(off + k)*4;
+        double zx = (double)e[0] + (double)e[1];
+        double zy = (double)e[2] + (double)e[3];
+        double two = 2.0*sqrt(zx*zx + zy*zy);
+        // Floor rather than skip: at a superattracting point |2Z| is exactly 0
+        // and that is the strongest attraction there is. Skipping those entries
+        // made the period-2 bulb centre (orbit 0, -1, 0, ...) read as
+        // *repelling*, since only its |2Z| = 2 terms were left. The floor bounds
+        // how much one near-critical pass can drag the mean, which keeps deep
+        // repelling references positive: their measured growth is ~+0.23, and the
+        // worst single term shifts that by less than 0.01.
+        acc += log(two > 1e-12 ? two : 1e-12);
+        cnt++;
+    }
+    if (cnt <= 0) return;
+    refGrowth = acc/(double)cnt;
+    refAttracting = (refGrowth < 0.0);
+}
+
+// What the worst case costs. Measured on this GPU at 1920x1080 fp64: a view
+// where every pixel runs to the cap manages roughly 5000 iterations/second, and
+// 6000 already overruns FRAME_BUDGET_MS and trips the watchdog. Scale by pixel
+// count, since the cost is per pixel.
+static int WorstCaseIterations(void)
+{
+    double px = (double)GetScreenWidth()*(double)GetScreenHeight();
+    double n = 3500.0*(1920.0*1080.0)/px;
+    if (n < 100.0) n = 100.0;
+    return (int)n;
 }
 
 // Walks out from the view centre in whole pixels for the closest point whose
@@ -321,10 +400,24 @@ static int RefPrepare(double cx, double cy, double span, double aspect,
     if (refValid &&
         fabs(refX - cx) <= REF_KEEP_PX*span*aspect &&
         fabs(refY - cy) <= REF_KEEP_PX*span) {
+        // A view can have *no* nearby point surviving the requested budget --
+        // the reference must be deep inside the set, and at depth the visible
+        // frame is mostly thin filaments. When that happens the search below
+        // falls back to a shorter reference, and without this latch every frame
+        // would retry: RefExtend fails (the short reference escapes under the
+        // bigger need), the ring search lands on a different pixel, refMax and
+        // the attraction verdict flip, and the iteration count bounces between
+        // them. That was a visible flicker on a static view, once per frame,
+        // along with a full table re-upload each time.
+        if (refShortFor > 0) {
+            if (refFilled > refShortFor) { RefUpload(); return refFilled - 1; }
+            return refFilled - 1;
+        }
         if (RefExtend(need)) { RefUpload(); return refFilled - 1; }
         // It escaped under the larger budget; fall through and look for another.
     }
     refValid = 0;
+    refShortFor = 0;
     if (!RefFind(cx, cy, span, aspect, sw, sh, need, REF_SEARCH_PX)) {
         // Nothing survives the full budget nearby. A reference that survives a
         // fraction of it still beats direct fp64's 1e-13 wall, since the caller
@@ -333,6 +426,7 @@ static int RefPrepare(double cx, double cy, double span, double aspect,
             int n = need/f;
             if (n < 64) break;
             RefFind(cx, cy, span, aspect, sw, sh, n, REF_SEARCH_PX);
+            if (refValid) refShortFor = refFilled;   // settled; stop re-searching
         }
         if (!refValid) return 0;
     }
@@ -379,12 +473,52 @@ static void StepGovernor(double frameMs, int want, int *iter)
 {
     static double ms = 0.0;
     static int cur = 0;
+    static bool stalled = false;   // one warning per stall episode, not per frame
+    static int hold = 0;            // frames to wait after a shrink before climbing
     if (ms <= 0.0) ms = frameMs;
     else ms += 0.25*(frameMs - ms);
     if (cur <= 0) cur = ITER_START;
     if (cur > want) cur = want;
-    else if (ms > FRAME_BUDGET_MS) cur = (int)(cur*0.75);
-    else if (ms < FRAME_BUDGET_MS*0.5) cur += cur/16 + 1;
+    else if (ms > FRAME_BUDGET_MS) {
+        // Scale by the overage, not a fixed 0.75. A fixed shave needs ~15
+        // consecutive overrunning frames to recover, and at an *attracting*
+        // reference every pixel runs to the cap, so each of those frames is a
+        // multi-second one: the app looks wedged for minutes while ESC still
+        // works, because the frames are finishing, just far too slowly.
+        double scale = FRAME_BUDGET_MS/ms;
+        if (scale < 0.05) scale = 0.05;
+        int before = cur;
+        cur = (int)(cur*scale);
+        if (!stalled) {
+            stalled = true;
+            TraceLog(LOG_WARNING, "frame over budget: %.0f ms (budget %.0f), "
+                   "iter %d -> %d of %d wanted", ms, FRAME_BUDGET_MS,
+                   before, cur, want);
+        }
+        // Let the count settle before climbing again. Otherwise the two rules
+        // fight: the climb overshoots the budget, the shrink gives back exactly
+        // what the climb added, and the detail level oscillates every other
+        // frame instead of converging on what the machine can actually hold.
+        hold = 30;
+    }
+    else if (ms < FRAME_BUDGET_MS*0.5) {
+        // Climb in proportion to measured headroom, mirroring the shrink above.
+        // A fixed cur/16 step needs ~63 frames to climb back from a clamp to a
+        // deep view's target (log(90000/2000)/log(1.0625)), and the whole table
+        // is re-uploaded on every one of those frames while its tail grows, so
+        // the picture visibly sharpens over many seconds. Measured frame time
+        // still decides the cap; only the step size changed. The step is capped
+        // at 1.15 rather than 1.6 because a step that can jump 60% in one frame
+        // overshoots the budget outright, and the shrink then gives it straight
+        // back -- visible as detail flickering between two levels. 1.15 still
+        // converges ~2.5x faster than the old fixed 6% while staying inside the
+        // 2x band between the shrink and climb thresholds.
+        double scale = (FRAME_BUDGET_MS*0.7)/ms;
+        if (scale > 1.15) scale = 1.15;
+        cur += (int)(cur*(scale - 1.0)) + 1;
+        stalled = false;
+    }
+    if (hold > 0) hold--;
     if (cur > want) cur = want;
     if (cur < 50) cur = 50;
     *iter = cur;
@@ -435,6 +569,14 @@ int main(int argc, char **argv)
         }
     }
 
+    // Vsync hint, not because we want tear-free output but because it is what
+    // makes the frame time measurable. Without it the WSLg/D3D12 swap returns
+    // immediately and the CPU never waits for the GPU, so GetFrameTime() only
+    // ever reports SetTargetFPS pacing: the state log showed 36366 iterations
+    // at 1680x1050 as 17 ms, which is ~4.4e12 pixel-iterations/second. iter
+    // therefore tracked want 1:1 and the frame-cost governor, blind, never held
+    // anything back -- which is the real reason the viewer kept stalling.
+    SetConfigFlags(FLAG_VSYNC_HINT);
     InitWindow(shot ? shotW : 1920, shot ? shotH : 1080, "Mandelbrot (perturbation)");
     if (!shot) {
         SetWindowState(FLAG_FULLSCREEN_MODE);
@@ -481,6 +623,9 @@ int main(int argc, char **argv)
         tcx = cx = shotCx; tcy = cy = shotCy; tspan = span = shotSpan;
     }
     double iterScale = 1.0;
+    bool capAnnounced = false;     // so the cap logs once per reference
+    int tick = 0;
+    int lastIter = -1, lastPath = -1, lastRefMax = -1;
     // --shot takes a shader path value (see the PATH_* block) rather than a UI
     // mode, so the verification loop can name the branch it wants exactly.
     int pathMode = MODE_AUTO;
@@ -555,7 +700,45 @@ int main(int argc, char **argv)
         if (want < 50) want = 50;
         if (want > ITER_HARD_MAX) want = ITER_HARD_MAX;
         int iter = want;
-        if (!shot) StepGovernor(1000.0*(double)GetFrameTime(), want, &iter);
+        if (!shot) {
+            // Predictive half of the governor: keep the *first* frame of an
+            // attracting view inside the watchdog, not just the ones after it.
+            if (refAttracting) {
+                int cap = WorstCaseIterations();
+                if (want > cap) {
+                    // Once per adopted reference. Guarding on the *wanted* value
+                    // instead logged on every zoom step, since AutoIterations
+                    // climbs monotonically and so always exceeded the last one:
+                    // 300 lines for a single minibrot.
+                    if (!capAnnounced) {
+                        capAnnounced = true;
+                        TraceLog(LOG_WARNING, "attracting reference: capping "
+                               "iterations at %d (wanted %d) so no pixel runs "
+                               "past the watchdog", cap, want);
+                    }
+                    want = cap;
+                }
+            }
+            // This is only meaningful because of FLAG_VSYNC_HINT: without it
+            // the swap returns before the GPU is done, so this reads only
+            // SetTargetFPS pacing (36366 iterations at 1680x1050 reported as
+            // 17 ms) and the governor below is blind by construction.
+            double frameMs = 1000.0*(double)GetFrameTime();
+            StepGovernor(frameMs, want, &iter);
+            // The trajectory into a stall is the missing datum: the governor log
+            // only fires on the frame that was already too slow, which is one
+            // frame too late to explain what preceded it.
+            if ((tick % 120) == 0) {
+                TraceLog(LOG_INFO, "state: span %.3e iter %d/%d refMax %d "
+                       "refValid %d attr %d growth %.3f filled %d uploaded %d "
+                       "frame %.0f ms",
+                       span, iter, want, (refValid ? refFilled - 1 : 0), refValid,
+                       (int)refAttracting, refGrowth, refFilled, refUploaded,
+                       frameMs);
+                tick = 0;
+            }
+            tick++;
+        }
 
         // The reference has to be in hand before the path is chosen, since its
         // existence decides whether perturbation is available at all.
@@ -576,6 +759,19 @@ int main(int argc, char **argv)
         }
 
         if (debugCounts) path = shotPath;
+
+        // Anything that varies frame to frame has to show up here or a flicker
+        // has no explanation: iter, path and refMax are the only candidates when
+        // the view is static and no input is arriving. Logged on change only, so
+        // a settled frame costs nothing.
+        if (!shot && (iter != lastIter || path != lastPath || refMax != lastRefMax)) {
+            TraceLog(LOG_INFO, "change: iter %d->%d path %d->%d refMax %d->%d "
+                   "moving %d refValid %d attr %d filled %d uploaded %d",
+                   lastIter, iter, lastPath, path, lastRefMax, refMax,
+                   (int)moving, refValid, (int)refAttracting, refFilled,
+                   refUploaded);
+            lastIter = iter; lastPath = path; lastRefMax = refMax;
+        }
 
         double stepX = span*aspect/sw, stepY = span/sh;
         double refOffX = (cx - refX)/stepX, refOffY = (cy - refY)/stepY;
@@ -650,9 +846,10 @@ int main(int argc, char **argv)
                      mx, my, refX, refY);
         }
         if (shot) {
-            TraceLog(LOG_WARNING, "shot: path %d iter %d refN %d refValid %d "
+            TraceLog(LOG_WARNING, "shot: path %d iter %d refN %d refValid %d attr %d growth %.4f "
                    "refOff %.10g %.10g step %.10g %.10g",
-                   path, iter, refMax, refValid, refOffX, refOffY, stepX, stepY);
+                   path, iter, refMax, refValid, (int)refAttracting, refGrowth,
+                   refOffX, refOffY, stepX, stepY);
         }
         if (shot && ++frames >= 3) {
             unsigned char *px = rlReadScreenPixels(sw, sh);
