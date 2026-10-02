@@ -126,7 +126,15 @@ audio, networking, and fullscreen behavior. Keep changes small.
   and glyphs inside the crop read as render errors — that cost hours and looks
   exactly like a numerical band failure. Verify with
   `CROP=120 SPANS="1e-6 1e-20" ./pert_verify.sh 480 270`; read `mem`, not
-  `mean|d|`, past ~1e-4. `pkill -x pert` before verifying: a second fullscreen
+  `mean|d|`, past ~1e-4 -- but only where `mem` means something. At c=-1.7497 the
+  whole frame is exterior for spans <=1e-8 (`interior 0/14400` at every offset),
+  so `mem 0` from two paths agreeing just means both found nothing; check
+  `interior` is non-trivial before believing any membership number, and fall back
+  to banding error. When the viewer stalls, flickers or renders less than it
+  should, read the `state:` (every 120 frames) and `change:` (only when `iter`,
+  `path` or `refMax` actually changes) trace lines in the log before touching
+  anything -- with a static view those three are the only quantities that can
+  vary, and they found two bugs that looked like the governor's fault. `pkill -x pert` before verifying: a second fullscreen
   instance contends for the GPU and makes shots segfault or dump half-rendered
   frames, which looks exactly like a numerical regression. `FRAME_BUDGET_MS` is
   700 because the watchdog kills the GL context between 1.0 and 1.2 s/frame;

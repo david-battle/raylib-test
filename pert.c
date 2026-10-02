@@ -623,7 +623,6 @@ int main(int argc, char **argv)
         tcx = cx = shotCx; tcy = cy = shotCy; tspan = span = shotSpan;
     }
     double iterScale = 1.0;
-    bool capAnnounced = false;     // so the cap logs once per reference
     int tick = 0;
     int lastIter = -1, lastPath = -1, lastRefMax = -1;
     // --shot takes a shader path value (see the PATH_* block) rather than a UI
