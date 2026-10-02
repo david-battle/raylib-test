@@ -5,4 +5,5 @@ net_test
 cell
 ico
 mandelbrot
+mandelbrot_ref
 polyhedron_attack

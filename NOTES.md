@@ -391,12 +391,39 @@ Rules that keep it working:
   fp64 is membership-exact through 1e-12; only the colour error grows (float
   smooth-colour maths plus fp64 rounding). Auto crossover `PRECISE_ZOOM 2e4` sits
   where float32 starts to break.
-- **The fp64 iteration cap is nearly free** — frame cost tracks the *average*
-  escape count, not `maxIter`: at span 1e-8, 8000 iterations and 1e6 iterations
-  both cost ~135 ms/frame, because only pixels that never escape pay for the
-  cap. So `PRECISE_ITER` went 4000 -> 40000 and `AutoIterations` is no longer
-  truncated (it wants 7427 at 1e-5, 11414 at 1e-8, 16729 at 1e-12). Cost:
-  ~26-30 ms/frame float32 shallow, ~130-230 ms/frame fp64 deep at 1680x1050.
+- **The fp64 iteration cap is nearly free *when pixels escape*** — frame cost
+  tracks the *average* escape count, not `maxIter`: at span 1e-8, 8000
+  iterations and 1e6 iterations both cost ~135 ms/frame, because only pixels
+  that never escape pay for the cap. On that evidence `PRECISE_ITER` went
+  4000 -> 40000 and `AutoIterations` is no longer truncated (it wants 7427 at
+  1e-5, 11414 at 1e-8, 16729 at 1e-12). Cost: ~26-30 ms/frame float32 shallow,
+  ~130-230 ms/frame fp64 deep at 1680x1050.
+  **But "nearly free" only holds for escaping views — see the watchdog below,
+  which is what actually limits `PRECISE_ITER` on this machine.**
+- **A deep fp64 view can outrun the GPU watchdog and go permanently black.**
+  Found with `mandelbrot_harness.py`, not by using the app. Interior pixels pay
+  the whole cap, so an interior-heavy view at `PRECISE_ITER` 40000 costs
+  seconds per frame; the context resets and every later frame renders nothing.
+  Symptom is nasty because it looks like a shader bug: frame 2 takes 2.35 s,
+  frames 3..N then take ~10 ms each, and the dump is 100% black while still
+  logging `prec 1 iter 40000`. Measured at span 1e-6 (this centre renders ~73%
+  interior at 5000 iterations), fp64, 1680x1050:
+
+  | iteration cap | slowest frame | image |
+  |---|---|---|
+  | 8000 | 0.58 s | renders (73% black) |
+  | 12000 | 0.84 s | renders |
+  | 20000 | 1.37 s | renders |
+  | 30000 | ~2.2 s | black, context gone |
+  | 40000 (`PRECISE_ITER`) | 2.35 s | black, context gone |
+
+  So ~20000 is the ceiling here, with ~2 s as the watchdog. Two consequences:
+  don't raise `PRECISE_ITER`, and treat a black deep view as a suspected
+  watchdog reset before suspecting the shader. The harness now measures its
+  slowest frame and exits 3 with a warning above 1.5 s, so a lost context can't
+  be recorded as a rendering result. (A genuinely all-interior view is still
+  legitimately black — that is what the iteration cap *means*; the frame time is
+  what distinguishes the two.)
 - **Screenshot/reference comparisons must flip rows.** `TakeScreenshot` output
   is top-down and the view maps growing `im` upward, so reference row `Y0+j` is
   PNG row `H-1-(Y0+j)`; the crop is `[H-Y0-CH : H-Y0]`, then reversed. The trap:
@@ -437,18 +464,52 @@ Rules that keep it working:
 - **Banding invalidates the colour half of the reference comparison.** Mean
   channel distance vs the CPU reference at span 1e-10 went 4.24 -> 34.76 while
   membership stayed exact (0/30000): a hue band is 25 iterations wide, so a
-  +/-1 iteration difference between two correct renderers now shows up as a
-  visible band. Compare *membership*, or compare raw `nu` (dump the shader's
-  `nu` as two base-251 digits and diff against the CPU counts). At span 1e-10
-  the GPU's `nu` matches the CPU median exactly and ~39% of pixels land within
-  the expected 1-iteration smooth-count offset; the rest is chaotic
-  amplification, which separates any two correct renderers at that depth.
-  Keep `refq.c`'s colouring in sync with the shader or this metric is nonsense.
+  difference of even a few iterations between two renderers now shows up as a
+  visible band. Compare *membership* (and `interior` in the crop, or a crop
+  with no interior pixels makes membership trivially 0), or compare escape
+  counts with `-counts 1`. Keep `mandelbrot_ref.c`'s colouring in step with the
+  shader's `shade()` or the colour number is meaningless.
 
-- The verification tooling is throwaway and lives outside the repo in
-  `/tmp/opencode/mtest` (`mkharness.py` renders any candidate copy of
-  `mandelbrot.c` headless at a given centre/span/zoom/iterations,
-  `refq*.c` renders the CPU `__float128` reference, `cmp.py` diffs the two).
-  It is not committed and `/tmp` is not preserved, so expect to rewrite it.
-  Patch a candidate shader by rewriting the C string literal in the *copy*,
-  then point `mkharness.py` at that copy — it reads the path it is given.
+### What actually limits deep precision (and it is not the orbit)
+
+- First measurement was misleading: dumping the shader's smooth `nu` and
+  diffing it against CPU integer counts showed differences of thousands of
+  iterations at span 1e-10, which looks like chaos separating any two correct
+  renderers. It is not. Rendering the same crop in `double` and in
+  `__float128` gives **bit-identical** escape counts for 120000/120000 pixels at
+  both 1e-8 and 1e-10 — the fp64 orbit is exact for these views, and there is
+  no precision to recover there.
+- The real limit is the last coordinate addition, `dCenter + (uv-0.5)*dSpan`,
+  which rounds to ulp(0.74) = 1.1e-16. At span 1e-10 one pixel is 1.5e-13, so
+  that rounding is ~7e-4 of a pixel. Simulated by rendering the quad orbit twice,
+  once with the exact coordinate and once with the coordinate rounded to double
+  the way a `dvec2` uniform stores it: escape counts change for 3% of pixels at
+  span 1e-6, 27% at 1e-10, 50% at 1e-12, by up to 10k iterations. Membership
+  still matches exactly, and 7e-4 px of shear is invisible.
+- So: don't chase this. If sub-ulp-of-a-pixel accuracy were ever genuinely
+  needed, the fix is to carry the coordinate as a (base + residual) pair through
+  the orbit — the coordinate analogue of DS, not the error-free-transform DS
+  that this GLSL compiler folds away. Adding `dCenter`'s residual to the orbit
+  is the wrong instinct; the residual is not the error, the final add is.
+
+## Verifying the shader (committed tools)
+
+- `mandelbrot_ref.c` — CPU oracle, same orbit and colouring as the shader, in
+  float32 / double / `__float128` (`-mode`), with `-counts 1` to emit raw escape
+  counts instead of colour. Needs only `-lquadmath`. This is what makes the
+  fp64 claims above checkable instead of folklore.
+- `mandelbrot_harness.py` — patches the frame loop out of a *copy* of
+  `mandelbrot.c` into "render N frames, dump, quit", so a candidate shader can be
+  rendered headless at a chosen centre/span/iterations. It is literal string
+  surgery: it breaks loudly (compile error) if that frame loop changes, and
+  fixing the pattern is the intended repair. Patch candidate colours by
+  rewriting the C string literal in the copy, then point the harness at it.
+- `mandelbrot_check.py` — stdlib-only diff of the two dumps (no numpy, no PIL).
+  Reports membership mismatches, how many interior pixels the crop actually
+  contains, and mean channel error, and warns when the colour number is being
+  inflated by the deep bands.
+- Row/format trap that cost an hour: `rlReadScreenPixels` returns **RGBA**, and
+  it has *already flipped the rows* (raylib does it in `rlgl.h`), so the raw
+  dump is top-down while the reference is bottom-up — the checker does the one
+  flip. Writing `sw*sh*3` bytes out of that buffer silently produces garbage
+  that still has a plausible membership mask if the crop has no interior.

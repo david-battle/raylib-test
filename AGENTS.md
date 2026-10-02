@@ -77,9 +77,29 @@ audio, networking, and fullscreen behavior. Keep changes small.
   1e-12 span at ~130-230 ms/frame. Do NOT "optimise" that path back into
   double-single hi/lo float pairs — this GPU's GLSL compiler folds the
   `twoSum` error-free transform away, so DS silently degrades to float32.
+  Don't raise `PRECISE_ITER` past ~20000 either: interior pixels pay the whole
+  cap, and a deep fp64 view with an interior-heavy frame hits the ~2 s GPU
+  watchdog, loses the context, and goes permanently black (looks like a shader
+  bug; see `NOTES.md`).
   raylib has no double uniform API: the file includes `external/glad.h` and
-  sets the `dvec2` uniforms with `glUniform2d`. Measurements in `NOTES.md`.
+  sets the `dvec2` uniforms with `glUniform2d`. The orbit is exact (double and
+  `__float128` agree bit-for-bit); what limits deep views is the last
+  coordinate add rounding to ulp(0.74), ~7e-4 px at span 1e-10. Don't go
+  hunting for more precision. Measurements in `NOTES.md`.
   Builds with the same gcc line as `ico`; run as `./mandelbrot`.
+- `mandelbrot_ref.c` / `mandelbrot_harness.py` / `mandelbrot_check.py` —
+  verification trio for the shader, use before believing any change to it.
+  `mandelbrot_ref.c` is a CPU oracle (same orbit + colouring, in float32 /
+  double / `__float128` via `-mode`, `-counts 1` for raw escape counts),
+  built with `gcc -O2 mandelbrot_ref.c -o mandelbrot_ref -lquadmath -lm`.
+  `mandelbrot_harness.py <src.c> <out.c>` rewrites the frame loop of a *copy* of
+  `mandelbrot.c` into a headless one-shot renderer (string surgery: it fails
+  loudly at compile time if that loop changes, which is the intended signal) and
+  dumps `out.png` plus `out.raw`; compile that copy with the `ico` gcc line.
+  `mandelbrot_check.py` diffs the two dumps with the stdlib only and reports
+  membership errors plus the mean channel error. Read `mem`, not the colour
+  number, on deep views: see `NOTES.md` for why, and for the RGBA/top-down vs
+  RGB/bottom-up row trap.
 
 - `cell.c` / `cell` — fullscreen Conway's Life editor with a sparse, unbounded
   grid (only non-empty cells stored; max ~2^53 coordinate range via double
@@ -108,8 +128,8 @@ audio, networking, and fullscreen behavior. Keep changes small.
 
 Binaries are compiled by statically linking against the sibling raylib clone at
 `~/raylib` (`src/raylib.h`, `src/libraylib.a`). Compiled binaries
-(`audio_test`, `fullscreen_test`, `net_test`, `mandelbrot`, `*.o`) are
-gitignored; commit source only. `net_test` also compiles `hide_cursor_x11.c`
+(`audio_test`, `fullscreen_test`, `net_test`, `mandelbrot`, `mandelbrot_ref`,
+`*.o`) are gitignored; commit source only. `net_test` also compiles `hide_cursor_x11.c`
 (see `NOTES.md`).
 
 ## Echo server (for `main.c`)
