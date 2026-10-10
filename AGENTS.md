@@ -56,6 +56,16 @@ audio, networking, and fullscreen behavior. Keep changes small.
   `ping_send.wav` per enemy shot, `coin.wav` when the saucer spawns). Build
   with the same `gcc -I ~/raylib/src ... libraylib.a -lm -lpthread -ldl -lX11`
   line as `ico`.
+- `tetris.c` / `tetris` — fullscreen Tetris clone (external-monitor fullscreen
+  like `ico.c`, cell size scales to the render resolution). 10x20 well, all 7
+  tetrominoes, move/soft-drop/rotate/hard-drop, line clears, scoring, levels
+  with rising gravity, next-piece preview, game over + ENTER restart, and an
+  on-screen controls panel. Each piece rotates in its own centered square grid
+  (3x3 for T/L/J/S/Z, 2x2 O, 4x4 I) so rotation does not shift the piece; a
+  grounded piece pulses and gets a blinking halo to show it hasn't locked yet.
+  Sounds from `resources/` (`buttonfx` move, `ping_send` rotate, `coin` lock,
+  `hit_splat` clear, `boom` game over) plus `country.mp3` as loooped BGM. Build
+  with the same line as `ico`; run `./tetris`. See NOTES.md.
 - `mandelbrot.c` / `mandelbrot` — fullscreen Mandelbrot explorer computed per
   pixel by one fullscreen fragment shader drawn straight into the backbuffer
   (no RenderTexture, so the WSLg RT Y-mirror doesn't apply; raylib's OpenGL

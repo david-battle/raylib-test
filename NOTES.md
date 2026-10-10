@@ -720,3 +720,29 @@ first (`pkill -x pert`, `pkill -x mandelbrot`).
   dump is top-down while the reference is bottom-up — the checker does the one
   flip. Writing `sw*sh*3` bytes out of that buffer silently produces garbage
   that still has a plausible membership mask if the crop has no interior.
+
+## tetris.c — rotation centering, lock cue, and the "it just died" false alarm
+
+- **Rotation centering.** The first version used one shared 4x4 grid for every
+  piece and rotated it about the grid midpoint (`t[x][3-y]=s[y][x]`). Because
+  most pieces sat off-center in that grid, each rotation walked the piece across
+  cells (T could jump two columns). Fix: give each piece its *own* square grid
+  centered on its occupied cells — 3x3 for T/L/J/S/Z, 2x2 for O, 4x4 for I with
+  the bar on its middle row — and rotate only the `n x n` sub-grid
+  (`SIZES[] = {4,2,3,3,3,3,3}`) about that grid's midpoint. Simulating four
+  rotations of every piece shows each returns to its exact starting cells, i.e.
+  zero drift. This is the discrete-grid best case; the piece centroid still
+  orbits the grid center by up to half a cell per quarter turn, but there is no
+  accumulating shift.
+- **Lock cue.** There is no separate lock-delay timer: a piece resting on the
+  stack stays live (still movable/rotatable) until the next gravity tick, which
+  is the "delay before it locks". To stop the player spamming keys meant for the
+  next piece, a grounded piece (`collide(..., cur.y+1)`) pulses its fill toward
+  white and gets a blinking white/amber bounding-box halo. If the timing ever
+  changes, this cue is keyed off the same `collide` test, so it stays honest.
+- **"It died while I was playing" was the tool, not the game.** The game does
+  not crash: the launch command chained `gcc ... && ... && nohup ./tetris &`, and
+  the background job inherited the bash tool's stdout pipe, so the tool's 120 s
+  timeout fired and killed the whole process group. Launch long-running GUI
+  programs as `setsid ./prog >log 2>&1 </dev/null & disown` in a command that
+  returns immediately.
