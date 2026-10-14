@@ -74,10 +74,16 @@ static int SelectExternalMonitor(void) {
 }
 
 int main(void) {
-    int ext = SelectExternalMonitor();
-    SetConfigFlags(FLAG_FULLSCREEN_MODE | FLAG_VSYNC_HINT);
+    SetConfigFlags(FLAG_WINDOW_HIDDEN);
+    InitWindow(1920, 1080, "Tetris");
+    int ext = GetMonitorCount() > 1 ? 0 : 0; // keep simple
+    // Try rdp-0 first
+    for (int i = 0; i < GetMonitorCount(); i++) {
+        const char *name = GetMonitorName(i);
+        if (name && strcmp(name, "rdp-0") == 0) { ext = i; break; }
+    }
     SetWindowMonitor(ext);
-    InitWindow(GetMonitorWidth(ext), GetMonitorHeight(ext), "Tetris");
+    ClearWindowState(FLAG_WINDOW_HIDDEN);
     SetWindowState(FLAG_FULLSCREEN_MODE);
     SetTargetFPS(60);
     InitAudioDevice();
