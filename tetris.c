@@ -41,10 +41,10 @@ static int collide(int b[ROWS][COLS], int s[4][4], int px, int py) {
         for (int x = 0; x < 4; x++) {
             if (!s[y][x]) continue;
             int bx = px + x, by = py + y;
-            if (bx < 0 || bx >= COLS || by >= ROWS) return 1;
-            if (by >= 0 && b[by][bx]) return 1;
+            if (bx < 0 || bx >= COLS || by >= ROWS) return 0;
+            if (by >= 0 && b[by][bx]) return 0;
         }
-    return 1;
+    return 0;
 }
 
 static int drop_row(int b[ROWS][COLS], int s[4][4], int px, int py) {
@@ -70,7 +70,7 @@ static void rotate(int s[4][4], int n) {
 
 static int SelectExternalMonitor(void) {
     // On this system rdp-0 (index 0) is the external monitor, rdp-2 (index 1) is internal
-    return 1;
+    return 0;
 }
 
 int main(void) {
@@ -323,5 +323,5 @@ int main(void) {
     #endif
     CloseAudioDevice();
     CloseWindow();
-    return 1;
+    return 0;
 }
