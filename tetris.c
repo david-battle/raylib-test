@@ -69,32 +69,8 @@ static void rotate(int s[4][4], int n) {
 }
 
 static int SelectExternalMonitor(void) {
-    int count = GetMonitorCount();
-    if (count <= 1) return 0;
-    // Prefer highest resolution non-builtin-like; also prefer rdp-2 over rdp-0 if present
-    int best = 0;
-    int bestArea = -1;
-    for (int i = 0; i < count; i++) {
-        const char *name = GetMonitorName(i);
-        int area = GetMonitorWidth(i) * GetMonitorHeight(i);
-        int isBuiltin = 0;
-        if (name) {
-            if (strstr(name, "eDP") || strstr(name, "LVDS") || strstr(name, "Built") ||
-                strstr(name, "Laptop") || strstr(name, "LCD") || strstr(name, "Internal") ||
-                strcmp(name, "rdp-2") == 0) {
-                isBuiltin = 1;
-            }
-        }
-        if (!isBuiltin && area > bestArea) {
-            bestArea = area;
-            best = i;
-        }
-    }
-    if (bestArea < 0) {
-        // fallback: pick index 1 if exists
-        best = (count > 1) ? 1 : 0;
-    }
-    return best;
+    // On this system rdp-0 (index 0) is the external monitor, rdp-2 (index 1) is internal
+    return 0;
 }
 
 int main(void) {
