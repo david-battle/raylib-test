@@ -100,8 +100,8 @@ static int SelectExternalMonitor(void) {
 int main(void) {
     int ext = SelectExternalMonitor();
     SetConfigFlags(FLAG_FULLSCREEN_MODE | FLAG_VSYNC_HINT);
-    InitWindow(GetMonitorWidth(ext), GetMonitorHeight(ext), "Tetris");
     SetWindowMonitor(ext);
+    InitWindow(GetMonitorWidth(ext), GetMonitorHeight(ext), "Tetris");
     SetWindowState(FLAG_FULLSCREEN_MODE);
     SetTargetFPS(60);
     InitAudioDevice();
