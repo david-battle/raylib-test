@@ -71,28 +71,28 @@ static void rotate(int s[4][4], int n) {
 static int SelectExternalMonitor(void) {
     int count = GetMonitorCount();
     if (count <= 1) return 0;
-    int cur = GetCurrentMonitor();
-    // Prefer non-builtin if possible
-    int best = cur;
+    // Prefer highest resolution non-builtin-like; also prefer rdp-2 over rdp-0 if present
+    int best = 0;
     int bestArea = -1;
     for (int i = 0; i < count; i++) {
         const char *name = GetMonitorName(i);
-        int builtin = name &&
-            (strstr(name, "eDP") || strstr(name, "LVDS") ||
-             strstr(name, "Built") || strstr(name, "Laptop") ||
-             strstr(name, "LCD") || strstr(name, "Internal") ||
-             strstr(name, "DP-1-1") == name || strstr(name, "eDP-1"));
-        // also if same as cur but maybe not external? keep scanning
         int area = GetMonitorWidth(i) * GetMonitorHeight(i);
-        if (!builtin && area > bestArea) {
+        int isBuiltin = 0;
+        if (name) {
+            if (strstr(name, "eDP") || strstr(name, "LVDS") || strstr(name, "Built") ||
+                strstr(name, "Laptop") || strstr(name, "LCD") || strstr(name, "Internal") ||
+                strcmp(name, "rdp-0") == 0) {
+                isBuiltin = 1;
+            }
+        }
+        if (!isBuiltin && area > bestArea) {
             bestArea = area;
             best = i;
         }
     }
     if (bestArea < 0) {
-        // fallback: pick highest index different from cur if exists
-        best = (cur == count-1) ? 0 : count-1;
-        if (best == cur && count > 1) best = 1 % count;
+        // fallback: pick index 1 if exists
+        best = (count > 1) ? 1 : 0;
     }
     return best;
 }
