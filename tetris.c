@@ -273,27 +273,19 @@ int main(void) {
                 }
                 // Ghost drop profile: 1-pixel strip just below bottom frame
                 if (!gameOver && !paused) {
-                    int gy = drop_row(board, cur.s, cur.x, cur.y);
+                    (void)drop_row(board, cur.s, cur.x, cur.y);
                     int stripY = oy + ROWS * cell + 1; // just below bottom frame
-                    for (int x = 0; x < COLS; x++) {
-                        // check if any part of ghost covers this column at or below bottom?
-                        for (int y = 0; y < 4; y++) {
-                            if (!cur.s[y][x - cur.x >= 0 && (x - cur.x) < 4 ? (x - cur.x) : -1]) continue; // easier loop
-                        }
-                    }
-                    // simpler: for each cell in ghost, if gy+y >= ROWS draw a 1-px wide bar at stripY under that column
-                    for (int y = 0; y < 4; y++) {
-                        for (int x = 0; x < 4; x++) {
-                            if (!cur.s[y][x]) continue;
-                            int by = gy + y;
-                            if (by >= ROWS) {
+                    // mark columns occupied by ghost at its final position (gy)
+                    unsigned int mask = 0;
+                    for (int y = 0; y < 4; y++)
+                        for (int x = 0; x < 4; x++)
+                            if (cur.s[y][x]) {
                                 int cx = cur.x + x;
-                                if (cx >= 0 && cx < COLS) {
-                                    DrawRectangle(ox + cx*cell, stripY, cell-1, 2, (Color){255,255,255,160});
-                                }
+                                if (cx >= 0 && cx < COLS) mask |= (1u << cx);
                             }
-                        }
-                    }
+                    for (int cx = 0; cx < COLS; cx++)
+                        if (mask & (1u << cx))
+                            DrawRectangle(ox + cx*cell, stripY, cell-1, 2, (Color){255,255,255,180});
                 }
                 for (int y = 0; y < 4; y++)
                     for (int x = 0; x < 4; x++)
