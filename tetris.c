@@ -47,6 +47,15 @@ static int collide(int b[ROWS][COLS], int s[4][4], int px, int py) {
     return 0;
 }
 
+static int drop_row(int b[ROWS][COLS], int s[4][4], int px, int py) {
+    int dy = 0;
+    while (!collide(b, s, px, py + dy + 1)) dy++;
+    return py + dy;
+}
+
+
+
+
 // 90-degree rotation of the n x n sub-grid about the grid midpoint. Because
 // every piece is centered in its own grid, the occupied cells stay centered.
 static void rotate(int s[4][4], int n) {
@@ -61,25 +70,39 @@ static void rotate(int s[4][4], int n) {
 
 static int SelectExternalMonitor(void) {
     int count = GetMonitorCount();
-    int best = GetCurrentMonitor();
+    if (count <= 1) return 0;
+    int cur = GetCurrentMonitor();
+    // Prefer non-builtin if possible
+    int best = cur;
     int bestArea = -1;
     for (int i = 0; i < count; i++) {
         const char *name = GetMonitorName(i);
         int builtin = name &&
             (strstr(name, "eDP") || strstr(name, "LVDS") ||
              strstr(name, "Built") || strstr(name, "Laptop") ||
-             strstr(name, "LCD") || strstr(name, "Internal"));
-        if (builtin) continue;
+             strstr(name, "LCD") || strstr(name, "Internal") ||
+             strstr(name, "DP-1-1") == name || strstr(name, "eDP-1"));
+        // also if same as cur but maybe not external? keep scanning
         int area = GetMonitorWidth(i) * GetMonitorHeight(i);
-        if (area > bestArea) { bestArea = area; best = i; }
+        if (!builtin && area > bestArea) {
+            bestArea = area;
+            best = i;
+        }
+    }
+    if (bestArea < 0) {
+        // fallback: pick highest index different from cur if exists
+        best = (cur == count-1) ? 0 : count-1;
+        if (best == cur && count > 1) best = 1 % count;
     }
     return best;
 }
 
 int main(void) {
-    InitWindow(1920, 1080, "Tetris");
-    SetWindowState(FLAG_FULLSCREEN_MODE);
-    SetWindowMonitor(SelectExternalMonitor());
+    int ext = SelectExternalMonitor();
+    SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_VSYNC_HINT);
+    InitWindow(GetMonitorWidth(ext), GetMonitorHeight(ext), "Tetris");
+    SetWindowMonitor(ext);
+    ToggleFullscreen();
     SetTargetFPS(60);
     InitAudioDevice();
 
@@ -94,7 +117,7 @@ int main(void) {
 
     Piece cur = {0};
     int nextType = 0;
-    int score = 0, lines = 0, level = 1, gameOver = 0;
+    int score = 0, lines = 0, level = 1, gameOver = 0, paused = 0;
     float timer = 0.0f, gravity = 0.8f;
 
     #define SPAWN() do { \
@@ -121,8 +144,19 @@ int main(void) {
                 memset(board, 0, sizeof(board));
                 score = lines = 0; level = 1; gameOver = 0;
                 gravity = 0.8f;
+                paused = 0;
                 SPAWN();
             }
+        } else if (IsKeyPressed(KEY_P) || IsKeyPressed(KEY_PAUSE)) {
+            paused = !paused;
+            #if defined(PLATFORM_DESKTOP)
+            if (paused && bgm.frameCount > 0) PauseMusicStream(bgm);
+            else if (!paused && bgm.frameCount > 0) ResumeMusicStream(bgm);
+            #endif
+        } else if (paused) {
+            #if defined(PLATFORM_DESKTOP)
+            if (bgm.frameCount > 0) UpdateMusicStream(bgm);
+            #endif
         } else {
             if (IsKeyPressed(KEY_LEFT)  && !collide(board, cur.s, cur.x-1, cur.y)) { cur.x--; PlaySound(sMove); }
             if (IsKeyPressed(KEY_RIGHT) && !collide(board, cur.s, cur.x+1, cur.y)) { cur.x++; PlaySound(sMove); }
@@ -237,6 +271,30 @@ int main(void) {
                                               : (Color){255,210,90,255};
                     DrawRectangleLinesEx(box, 3.0f, halo);
                 }
+                // Ghost drop profile: 1-pixel strip just below bottom frame
+                if (!gameOver && !paused) {
+                    int gy = drop_row(board, cur.s, cur.x, cur.y);
+                    int stripY = oy + ROWS * cell + 1; // just below bottom frame
+                    for (int x = 0; x < COLS; x++) {
+                        // check if any part of ghost covers this column at or below bottom?
+                        for (int y = 0; y < 4; y++) {
+                            if (!cur.s[y][x - cur.x >= 0 && (x - cur.x) < 4 ? (x - cur.x) : -1]) continue; // easier loop
+                        }
+                    }
+                    // simpler: for each cell in ghost, if gy+y >= ROWS draw a 1-px wide bar at stripY under that column
+                    for (int y = 0; y < 4; y++) {
+                        for (int x = 0; x < 4; x++) {
+                            if (!cur.s[y][x]) continue;
+                            int by = gy + y;
+                            if (by >= ROWS) {
+                                int cx = cur.x + x;
+                                if (cx >= 0 && cx < COLS) {
+                                    DrawRectangle(ox + cx*cell, stripY, cell-1, 2, (Color){255,255,255,160});
+                                }
+                            }
+                        }
+                    }
+                }
                 for (int y = 0; y < 4; y++)
                     for (int x = 0; x < 4; x++)
                         if (cur.s[y][x] && cur.y+y >= 0) {
@@ -263,18 +321,19 @@ int main(void) {
                 { "DOWN",        "soft drop" },
                 { "UP",          "rotate" },
                 { "SPACE",       "hard drop" },
+                { "P / PAUSE",   "pause" },
                 { "ENTER",       "restart" },
                 { "ESC",         "quit" },
             };
             int cfs = fs * 2 / 3;
             if (cfs < 10) cfs = 10;
             int colX = 0;
-            for (int i = 0; i < 6; i++) {
+            for (int i = 0; i < 7; i++) {
                 int w = MeasureText(ctl[i][0], cfs);
                 if (w > colX) colX = w;
             }
             colX += px + cfs;
-            for (int i = 0; i < 6; i++) {
+            for (int i = 0; i < 7; i++) {
                 int ly = cy + fs + i * (cfs + cfs/3);
                 DrawText(ctl[i][0], px, ly, cfs, RAYWHITE);
                 DrawText(ctl[i][1], colX, ly, cfs, (Color){160,160,180,255});
