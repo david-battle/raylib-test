@@ -81,7 +81,7 @@ static int SelectExternalMonitor(void) {
         if (name) {
             if (strstr(name, "eDP") || strstr(name, "LVDS") || strstr(name, "Built") ||
                 strstr(name, "Laptop") || strstr(name, "LCD") || strstr(name, "Internal") ||
-                strcmp(name, "rdp-0") == 0) {
+                strcmp(name, "rdp-2") == 0) {
                 isBuiltin = 1;
             }
         }
